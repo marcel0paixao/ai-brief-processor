@@ -1,0 +1,27 @@
+# Dependencies
+node_modules/
+
+# Builds and coverage
+dist/
+coverage/
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+npm-debug.log*
+
+# Editors and operating systems
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# NestJS
+backend/.nest/
+
+# Vite
+frontend/dist/
