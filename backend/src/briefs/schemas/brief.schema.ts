@@ -1,15 +1,15 @@
+import {
+  BriefStatus,
+  type BriefAnalysisResult as BriefAnalysisResultContract,
+  type BriefProcessingError as BriefProcessingErrorContract,
+} from '@ai-brief/shared';
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument } from 'mongoose';
 
-export enum BriefStatus {
-  PENDING = 'PENDING',
-  PROCESSING = 'PROCESSING',
-  COMPLETED = 'COMPLETED',
-  FAILED = 'FAILED',
-}
+export { BriefStatus } from '@ai-brief/shared';
 
 @Schema({ _id: false })
-export class BriefAnalysisResult {
+export class BriefAnalysisResult implements BriefAnalysisResultContract {
   @Prop({ required: true, trim: true })
   summary!: string;
 
@@ -33,7 +33,7 @@ export const BriefAnalysisResultSchema =
   SchemaFactory.createForClass(BriefAnalysisResult);
 
 @Schema({ _id: false })
-export class BriefProcessingError {
+export class BriefProcessingError implements BriefProcessingErrorContract {
   @Prop({ required: true, trim: true })
   code!: string;
 

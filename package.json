@@ -10,17 +10,23 @@
   },
   "workspaces": [
     "frontend",
-    "backend"
+    "backend",
+    "shared",
+    "worker"
   ],
   "scripts": {
     "dev:frontend": "npm run dev --workspace frontend",
-    "dev:backend": "npm run start:dev --workspace backend",
-    "build": "npm run build --workspace backend && npm run build --workspace frontend",
-    "lint": "npm run lint --workspace backend && npm run lint --workspace frontend",
-    "test": "npm run test --workspace backend -- --runInBand",
-    "test:e2e": "npm run test:e2e --workspace backend",
-    "infra:up": "docker compose up -d",
-    "infra:down": "docker compose down",
-    "infra:logs": "docker compose logs -f mongodb redis"
+    "dev:backend": "npm run build --workspace shared && npm run start:dev --workspace backend",
+    "dev:worker": "npm run build --workspace shared && npm run start:dev --workspace worker",
+    "build": "npm run build --workspace shared && npm run build --workspace backend && npm run build --workspace worker && npm run build --workspace frontend",
+    "lint": "npm run lint --workspace shared && npm run lint --workspace backend && npm run lint --workspace worker && npm run lint --workspace frontend",
+    "test": "npm run build --workspace shared && npm run test --workspace backend -- --runInBand",
+    "test:e2e": "npm run build --workspace shared && npm run test:e2e --workspace backend",
+    "infra:up": "docker compose up -d mongodb redis",
+    "infra:down": "docker compose stop mongodb redis",
+    "infra:logs": "docker compose logs -f mongodb redis",
+    "docker:up": "docker compose up -d --build",
+    "docker:down": "docker compose down",
+    "docker:logs": "docker compose logs -f backend worker mongodb redis"
   }
 }
