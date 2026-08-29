@@ -1,5 +1,20 @@
 import { BriefStatus } from '../schemas/brief.schema';
 
+export class BriefAnalysisResultDto {
+  summary!: string;
+  mainObjective!: string;
+  targetAudience!: string[];
+  communicationPillars!: string[];
+  suggestedActions!: string[];
+  risks!: string[];
+}
+
+export class BriefProcessingErrorDto {
+  code!: string;
+  message!: string;
+  retryable!: boolean;
+}
+
 export class CreateBriefResponseDto {
   id!: string;
   status!: BriefStatus;
@@ -15,4 +30,9 @@ export class BriefListItemDto {
 
 export class BriefDetailDto extends BriefListItemDto {
   brief!: string;
+  result?: BriefAnalysisResultDto;
+  error?: BriefProcessingErrorDto;
+  attemptCount!: number;
+  processingStartedAt?: Date;
+  completedAt?: Date;
 }

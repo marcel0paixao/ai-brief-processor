@@ -6,13 +6,21 @@ import {
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import {
+  BriefAnalysisResultDto,
   BriefDetailDto,
   BriefListItemDto,
+  BriefProcessingErrorDto,
   CreateBriefResponseDto,
 } from './dto/brief-response.dto';
 import { CreateBriefDto } from './dto/create-brief.dto';
 import { UpdateBriefDto } from './dto/update-brief.dto';
-import { Brief, BriefDocument, BriefStatus } from './schemas/brief.schema';
+import {
+  Brief,
+  BriefAnalysisResult,
+  BriefDocument,
+  BriefProcessingError,
+  BriefStatus,
+} from './schemas/brief.schema';
 
 function toListItem(brief: BriefDocument): BriefListItemDto {
   return {
@@ -24,10 +32,36 @@ function toListItem(brief: BriefDocument): BriefListItemDto {
   };
 }
 
+function toAnalysisResult(result: BriefAnalysisResult): BriefAnalysisResultDto {
+  return {
+    summary: result.summary,
+    mainObjective: result.mainObjective,
+    targetAudience: result.targetAudience,
+    communicationPillars: result.communicationPillars,
+    suggestedActions: result.suggestedActions,
+    risks: result.risks,
+  };
+}
+
+function toProcessingError(
+  error: BriefProcessingError,
+): BriefProcessingErrorDto {
+  return {
+    code: error.code,
+    message: error.message,
+    retryable: error.retryable,
+  };
+}
+
 function toDetail(brief: BriefDocument): BriefDetailDto {
   return {
     ...toListItem(brief),
     brief: brief.brief,
+    result: brief.result ? toAnalysisResult(brief.result) : undefined,
+    error: brief.error ? toProcessingError(brief.error) : undefined,
+    attemptCount: brief.attemptCount,
+    processingStartedAt: brief.processingStartedAt,
+    completedAt: brief.completedAt,
   };
 }
 

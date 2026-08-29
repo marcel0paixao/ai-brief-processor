@@ -24,6 +24,7 @@ interface BriefListItemBody extends CreateBriefResponseBody {
 
 interface BriefDetailBody extends BriefListItemBody {
   brief: string;
+  attemptCount: number;
 }
 
 describe('App (e2e)', () => {
@@ -81,6 +82,7 @@ describe('App (e2e)', () => {
     expect(storedBrief?.title).toBe(validBriefPayload.title);
     expect(storedBrief?.brief).toBe(validBriefPayload.brief);
     expect(storedBrief?.status).toBe('PENDING');
+    expect(storedBrief?.attemptCount).toBe(0);
   });
 
   it('/briefs (POST) rejects invalid input', async () => {
@@ -129,6 +131,7 @@ describe('App (e2e)', () => {
       title: validBriefPayload.title,
       brief: validBriefPayload.brief,
       status: 'PENDING',
+      attemptCount: 0,
     });
   });
 
