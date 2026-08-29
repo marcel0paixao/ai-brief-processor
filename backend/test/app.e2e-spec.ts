@@ -1,10 +1,17 @@
+import { getQueueToken } from '@nestjs/bullmq';
 import { INestApplication } from '@nestjs/common';
 import { getConnectionToken } from '@nestjs/mongoose';
 import { Test, TestingModule } from '@nestjs/testing';
+import { Queue } from 'bullmq';
 import { Connection, Types } from 'mongoose';
 import request from 'supertest';
 import { App } from 'supertest/types';
 import { AppModule } from './../src/app.module';
+import {
+  ANALYZE_BRIEF_JOB,
+  AnalyzeBriefJobData,
+  BRIEF_ANALYSIS_QUEUE,
+} from './../src/briefs/queue/briefs-queue.constants';
 
 const validBriefPayload = {
   title: 'Product launch campaign',
@@ -30,6 +37,7 @@ interface BriefDetailBody extends BriefListItemBody {
 describe('App (e2e)', () => {
   let app: INestApplication<App>;
   let connection: Connection;
+  let briefQueue: Queue<AnalyzeBriefJobData>;
 
   async function createBrief(): Promise<CreateBriefResponseBody> {
     const response = await request(app.getHttpServer())
@@ -43,6 +51,9 @@ describe('App (e2e)', () => {
   beforeAll(async () => {
     process.env.MONGODB_URI =
       'mongodb://localhost:27017/ai_brief_processor_test';
+    process.env.REDIS_HOST = 'localhost';
+    process.env.REDIS_PORT = '6379';
+    process.env.REDIS_DB = '15';
 
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
@@ -50,14 +61,22 @@ describe('App (e2e)', () => {
 
     app = moduleFixture.createNestApplication();
     connection = moduleFixture.get<Connection>(getConnectionToken());
+    briefQueue = moduleFixture.get<Queue<AnalyzeBriefJobData>>(
+      getQueueToken(BRIEF_ANALYSIS_QUEUE),
+    );
     await app.init();
+    await briefQueue.waitUntilReady();
   });
 
   afterEach(async () => {
-    await connection.collection('briefs').deleteMany({});
+    await Promise.all([
+      connection.collection('briefs').deleteMany({}),
+      briefQueue.drain(true),
+    ]);
   });
 
   afterAll(async () => {
+    await briefQueue.obliterate({ force: true });
     await app.close();
   });
 
@@ -83,6 +102,14 @@ describe('App (e2e)', () => {
     expect(storedBrief?.brief).toBe(validBriefPayload.brief);
     expect(storedBrief?.status).toBe('PENDING');
     expect(storedBrief?.attemptCount).toBe(0);
+
+    const queuedJob = await briefQueue.getJob(responseBody.id);
+
+    expect(queuedJob).not.toBeNull();
+    expect(queuedJob?.name).toBe(ANALYZE_BRIEF_JOB);
+    expect(queuedJob?.id).toBe(responseBody.id);
+    expect(queuedJob?.data).toEqual({ briefId: responseBody.id });
+    expect(queuedJob?.opts.attempts).toBe(3);
   });
 
   it('/briefs (POST) rejects invalid input', async () => {

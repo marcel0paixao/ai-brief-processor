@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Injectable,
   NotFoundException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
@@ -14,6 +15,7 @@ import {
 } from './dto/brief-response.dto';
 import { CreateBriefDto } from './dto/create-brief.dto';
 import { UpdateBriefDto } from './dto/update-brief.dto';
+import { BriefsQueueService } from './queue/briefs-queue.service';
 import {
   Brief,
   BriefAnalysisResult,
@@ -21,6 +23,12 @@ import {
   BriefProcessingError,
   BriefStatus,
 } from './schemas/brief.schema';
+
+const queueUnavailableError: BriefProcessingError = {
+  code: 'QUEUE_UNAVAILABLE',
+  message: 'The brief could not be scheduled for processing.',
+  retryable: true,
+};
 
 function toListItem(brief: BriefDocument): BriefListItemDto {
   return {
@@ -70,6 +78,7 @@ export class BriefsService {
   constructor(
     @InjectModel(Brief.name)
     private readonly briefModel: Model<Brief>,
+    private readonly briefsQueueService: BriefsQueueService,
   ) {}
 
   async create(
@@ -79,9 +88,32 @@ export class BriefsService {
       ...createBriefDto,
       status: BriefStatus.PENDING,
     });
+    const briefId = createdBrief._id.toString();
+
+    try {
+      await this.briefsQueueService.enqueueAnalysis(briefId);
+    } catch {
+      await this.briefModel
+        .updateOne(
+          { _id: createdBrief._id },
+          {
+            $set: {
+              status: BriefStatus.FAILED,
+              error: queueUnavailableError,
+            },
+          },
+        )
+        .exec();
+
+      throw new ServiceUnavailableException({
+        code: queueUnavailableError.code,
+        message: queueUnavailableError.message,
+        briefId,
+      });
+    }
 
     return {
-      id: createdBrief._id.toString(),
+      id: briefId,
       status: createdBrief.status,
     };
   }

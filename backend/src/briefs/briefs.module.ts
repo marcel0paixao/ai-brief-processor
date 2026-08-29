@@ -1,14 +1,24 @@
+import { BullModule } from '@nestjs/bullmq';
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { BriefsController } from './briefs.controller';
 import { BriefsService } from './briefs.service';
+import {
+  BRIEF_ANALYSIS_QUEUE,
+  BRIEF_QUEUE_CONFIG,
+} from './queue/briefs-queue.constants';
+import { BriefsQueueService } from './queue/briefs-queue.service';
 import { Brief, BriefSchema } from './schemas/brief.schema';
 
 @Module({
   imports: [
     MongooseModule.forFeature([{ name: Brief.name, schema: BriefSchema }]),
+    BullModule.registerQueue({
+      name: BRIEF_ANALYSIS_QUEUE,
+      configKey: BRIEF_QUEUE_CONFIG,
+    }),
   ],
   controllers: [BriefsController],
-  providers: [BriefsService],
+  providers: [BriefsService, BriefsQueueService],
 })
 export class BriefsModule {}
