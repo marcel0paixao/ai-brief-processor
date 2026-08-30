@@ -28,6 +28,19 @@ export class BriefListItemDto {
   updatedAt!: Date;
 }
 
+export class BriefListMetaDto {
+  page!: number;
+  limit!: number;
+  total!: number;
+  totalPages!: number;
+  statusCounts!: Record<BriefStatus, number>;
+}
+
+export class BriefListResponseDto {
+  items!: BriefListItemDto[];
+  meta!: BriefListMetaDto;
+}
+
 export class BriefDetailDto extends BriefListItemDto {
   brief!: string;
   result?: BriefAnalysisResultDto;

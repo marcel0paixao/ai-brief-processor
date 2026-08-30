@@ -3,6 +3,12 @@ export const ANALYZE_BRIEF_JOB = 'analyze-brief';
 
 export interface AnalyzeBriefJobData {
   briefId: string;
+  tenantId: string;
+}
+
+export enum UserRole {
+  ADMIN = 'ADMIN',
+  MEMBER = 'MEMBER',
 }
 
 export enum BriefStatus {

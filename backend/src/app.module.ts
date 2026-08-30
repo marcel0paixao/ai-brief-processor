@@ -5,8 +5,10 @@ import { APP_PIPE } from '@nestjs/core';
 import { MongooseModule } from '@nestjs/mongoose';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
+import { AuthModule } from './auth/auth.module';
 import { BriefsModule } from './briefs/briefs.module';
 import { BRIEF_QUEUE_CONFIG } from './briefs/queue/briefs-queue.constants';
+import { UsersModule } from './users/users.module';
 
 @Module({
   imports: [
@@ -43,6 +45,8 @@ import { BRIEF_QUEUE_CONFIG } from './briefs/queue/briefs-queue.constants';
         },
       }),
     }),
+    AuthModule,
+    UsersModule,
     BriefsModule,
   ],
   controllers: [AppController],

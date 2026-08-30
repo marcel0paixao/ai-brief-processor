@@ -1,4 +1,4 @@
-import { deleteModel, model } from 'mongoose';
+import { deleteModel, model, Types } from 'mongoose';
 import {
   Brief,
   BriefAnalysisResult,
@@ -12,6 +12,8 @@ const BriefModel = model<Brief>(modelName, BriefSchema);
 const validInput = {
   title: 'Product launch campaign',
   brief: 'We need to introduce the new product to small business owners.',
+  tenantId: new Types.ObjectId(),
+  createdBy: new Types.ObjectId(),
 };
 
 const validResult: BriefAnalysisResult = {

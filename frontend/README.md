@@ -1,32 +1,43 @@
-# React + TypeScript + Vite
+# Frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+Interface React + Vite do AI Brief Processor.
 
-Currently, two official plugins are available:
+## Funcionalidades
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+- lista de análises com status e atualização automática;
+- login, cadastro de workspace e restauração de sessão JWT;
+- isolamento visual por organização e navegação conforme o papel;
+- busca, filtro por status/período, ordenação e paginação;
+- gestão de usuários para administradores;
+- criação de briefing com validações equivalentes às da API;
+- detalhe com polling, edição e exclusão para administradores;
+- exibição do resultado estruturado, do erro e dos metadados do job;
+- layout responsivo e estados de carregamento, vazio e indisponibilidade.
 
-## React Compiler
+## Desenvolvimento local
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+Com o backend disponível em `http://localhost:3000`:
 
-## Expanding the Oxlint configuration
-
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
-
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
+```bash
+cp -n frontend/.env.example frontend/.env
+npm run dev:frontend
 ```
 
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+O Vite disponibiliza a interface em `http://localhost:5173`.
+
+## Docker
+
+A imagem usa Node.js para gerar o bundle e Nginx para servi-lo. No Compose, o
+Nginx também encaminha `/api` para o serviço `backend`, evitando dependência de
+um endereço de API conhecido pelo navegador.
+
+```bash
+npm run docker:up
+```
+
+Frontend: `http://localhost:5173`
+
+## Variáveis
+
+`VITE_API_URL` define a base pública da API. O desenvolvimento local usa
+`http://localhost:3000`; a imagem Docker usa `/api` por padrão.

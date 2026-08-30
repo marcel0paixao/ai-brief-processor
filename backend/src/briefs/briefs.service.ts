@@ -5,11 +5,14 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import { Model, SortOrder as MongooseSortOrder, Types } from 'mongoose';
+import type { AuthenticatedUser } from '../auth/authenticated-user';
+import { BriefQueryDto, SortOrder } from './dto/brief-query.dto';
 import {
   BriefAnalysisResultDto,
   BriefDetailDto,
   BriefListItemDto,
+  BriefListResponseDto,
   BriefProcessingErrorDto,
   CreateBriefResponseDto,
 } from './dto/brief-response.dto';
@@ -28,6 +31,13 @@ const queueUnavailableError: BriefProcessingError = {
   code: 'QUEUE_UNAVAILABLE',
   message: 'The brief could not be scheduled for processing.',
   retryable: true,
+};
+
+type BriefFilter = {
+  tenantId: Types.ObjectId;
+  status?: BriefStatus;
+  $or?: Array<{ title: RegExp } | { brief: RegExp }>;
+  createdAt?: { $gte?: Date; $lte?: Date };
 };
 
 function toListItem(brief: BriefDocument): BriefListItemDto {
@@ -73,6 +83,10 @@ function toDetail(brief: BriefDocument): BriefDetailDto {
   };
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 @Injectable()
 export class BriefsService {
   constructor(
@@ -83,19 +97,26 @@ export class BriefsService {
 
   async create(
     createBriefDto: CreateBriefDto,
+    currentUser: AuthenticatedUser,
   ): Promise<CreateBriefResponseDto> {
+    const tenantId = new Types.ObjectId(currentUser.tenantId);
     const createdBrief = await this.briefModel.create({
       ...createBriefDto,
+      tenantId,
+      createdBy: new Types.ObjectId(currentUser.id),
       status: BriefStatus.PENDING,
     });
     const briefId = createdBrief._id.toString();
 
     try {
-      await this.briefsQueueService.enqueueAnalysis(briefId);
+      await this.briefsQueueService.enqueueAnalysis(
+        briefId,
+        currentUser.tenantId,
+      );
     } catch {
       await this.briefModel
         .updateOne(
-          { _id: createdBrief._id },
+          { _id: createdBrief._id, tenantId },
           {
             $set: {
               status: BriefStatus.FAILED,
@@ -112,41 +133,78 @@ export class BriefsService {
       });
     }
 
+    return { id: briefId, status: createdBrief.status };
+  }
+
+  async findAll(
+    query: BriefQueryDto,
+    currentUser: AuthenticatedUser,
+  ): Promise<BriefListResponseDto> {
+    const tenantId = new Types.ObjectId(currentUser.tenantId);
+    const baseFilter = this.createBaseFilter(query, tenantId);
+    const itemFilter: BriefFilter = query.status
+      ? { ...baseFilter, status: query.status }
+      : baseFilter;
+    const direction: MongooseSortOrder =
+      query.sortOrder === SortOrder.ASC ? 1 : -1;
+    const skip = (query.page - 1) * query.limit;
+
+    const [briefs, total, statusRows] = await Promise.all([
+      this.briefModel
+        .find(itemFilter)
+        .select({ brief: 0, result: 0, error: 0 })
+        .sort({ [query.sortBy]: direction })
+        .skip(skip)
+        .limit(query.limit)
+        .exec(),
+      this.briefModel.countDocuments(itemFilter).exec(),
+      this.briefModel
+        .aggregate<{ _id: BriefStatus; count: number }>([
+          { $match: baseFilter },
+          { $group: { _id: '$status', count: { $sum: 1 } } },
+        ])
+        .exec(),
+    ]);
+
+    const statusCounts: Record<BriefStatus, number> = {
+      PENDING: 0,
+      PROCESSING: 0,
+      COMPLETED: 0,
+      FAILED: 0,
+    };
+
+    for (const row of statusRows) statusCounts[row._id] = row.count;
+
     return {
-      id: briefId,
-      status: createdBrief.status,
+      items: briefs.map(toListItem),
+      meta: {
+        page: query.page,
+        limit: query.limit,
+        total,
+        totalPages: total === 0 ? 0 : Math.ceil(total / query.limit),
+        statusCounts,
+      },
     };
   }
 
-  async findAll(): Promise<BriefListItemDto[]> {
-    const briefs = await this.briefModel
-      .find()
-      .select({ brief: 0 })
-      .sort({ createdAt: -1 })
-      .exec();
-
-    return briefs.map(toListItem);
-  }
-
-  async findOne(id: string): Promise<BriefDetailDto> {
-    const brief = await this.findByIdOrThrow(id);
-
-    return toDetail(brief);
+  async findOne(
+    id: string,
+    currentUser: AuthenticatedUser,
+  ): Promise<BriefDetailDto> {
+    return toDetail(await this.findByIdOrThrow(id, currentUser.tenantId));
   }
 
   async update(
     id: string,
     updateBriefDto: UpdateBriefDto,
+    currentUser: AuthenticatedUser,
   ): Promise<BriefDetailDto> {
     const changes: Partial<Pick<Brief, 'title' | 'brief'>> = {};
 
-    if (updateBriefDto.title !== undefined) {
+    if (updateBriefDto.title !== undefined)
       changes.title = updateBriefDto.title;
-    }
-
-    if (updateBriefDto.brief !== undefined) {
+    if (updateBriefDto.brief !== undefined)
       changes.brief = updateBriefDto.brief;
-    }
 
     if (Object.keys(changes).length === 0) {
       throw new BadRequestException(
@@ -155,35 +213,59 @@ export class BriefsService {
     }
 
     const updatedBrief = await this.briefModel
-      .findByIdAndUpdate(
-        id,
+      .findOneAndUpdate(
+        { _id: id, tenantId: new Types.ObjectId(currentUser.tenantId) },
         { $set: changes },
         { returnDocument: 'after', runValidators: true },
       )
       .exec();
 
-    if (!updatedBrief) {
-      throw new NotFoundException('Brief not found');
-    }
+    if (!updatedBrief) throw new NotFoundException('Brief not found');
 
     return toDetail(updatedBrief);
   }
 
-  async remove(id: string): Promise<void> {
-    const deletedBrief = await this.briefModel.findByIdAndDelete(id).exec();
+  async remove(id: string, currentUser: AuthenticatedUser): Promise<void> {
+    const deletedBrief = await this.briefModel
+      .findOneAndDelete({
+        _id: id,
+        tenantId: new Types.ObjectId(currentUser.tenantId),
+      })
+      .exec();
 
-    if (!deletedBrief) {
-      throw new NotFoundException('Brief not found');
-    }
+    if (!deletedBrief) throw new NotFoundException('Brief not found');
   }
 
-  private async findByIdOrThrow(id: string): Promise<BriefDocument> {
-    const brief = await this.briefModel.findById(id).exec();
+  private createBaseFilter(
+    query: BriefQueryDto,
+    tenantId: Types.ObjectId,
+  ): BriefFilter {
+    const filter: BriefFilter = { tenantId };
 
-    if (!brief) {
-      throw new NotFoundException('Brief not found');
+    if (query.search) {
+      const search = new RegExp(escapeRegExp(query.search), 'i');
+      filter.$or = [{ title: search }, { brief: search }];
     }
 
+    if (query.dateFrom || query.dateTo) {
+      const createdAt: { $gte?: Date; $lte?: Date } = {};
+      if (query.dateFrom) createdAt.$gte = new Date(query.dateFrom);
+      if (query.dateTo) createdAt.$lte = new Date(query.dateTo);
+      filter.createdAt = createdAt;
+    }
+
+    return filter;
+  }
+
+  private async findByIdOrThrow(
+    id: string,
+    tenantId: string,
+  ): Promise<BriefDocument> {
+    const brief = await this.briefModel
+      .findOne({ _id: id, tenantId: new Types.ObjectId(tenantId) })
+      .exec();
+
+    if (!brief) throw new NotFoundException('Brief not found');
     return brief;
   }
 }

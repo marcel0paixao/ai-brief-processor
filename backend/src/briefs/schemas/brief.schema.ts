@@ -4,7 +4,7 @@ import {
   type BriefProcessingError as BriefProcessingErrorContract,
 } from '@ai-brief/shared';
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import { HydratedDocument } from 'mongoose';
+import { HydratedDocument, SchemaTypes, Types } from 'mongoose';
 
 export { BriefStatus } from '@ai-brief/shared';
 
@@ -71,6 +71,12 @@ export class Brief {
   })
   brief!: string;
 
+  @Prop({ type: SchemaTypes.ObjectId, required: true })
+  tenantId!: Types.ObjectId;
+
+  @Prop({ type: SchemaTypes.ObjectId, required: true })
+  createdBy!: Types.ObjectId;
+
   @Prop({
     type: String,
     enum: BriefStatus,
@@ -111,4 +117,5 @@ export class Brief {
 
 export const BriefSchema = SchemaFactory.createForClass(Brief);
 
-BriefSchema.index({ createdAt: -1 });
+BriefSchema.index({ tenantId: 1, createdAt: -1 });
+BriefSchema.index({ tenantId: 1, status: 1, createdAt: -1 });

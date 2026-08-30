@@ -14,13 +14,11 @@ export class BriefsQueueService {
     private readonly queue: Queue<AnalyzeBriefJobData>,
   ) {}
 
-  async enqueueAnalysis(briefId: string): Promise<void> {
+  async enqueueAnalysis(briefId: string, tenantId: string): Promise<void> {
     await this.queue.add(
       ANALYZE_BRIEF_JOB,
-      { briefId },
-      {
-        jobId: briefId,
-      },
+      { briefId, tenantId },
+      { jobId: briefId },
     );
   }
 }

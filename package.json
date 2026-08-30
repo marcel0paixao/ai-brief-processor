@@ -15,6 +15,7 @@
     "worker"
   ],
   "scripts": {
+    "env:setup": "node scripts/setup-env.mjs",
     "dev:frontend": "npm run dev --workspace frontend",
     "dev:backend": "npm run build --workspace shared && npm run start:dev --workspace backend",
     "dev:worker": "npm run build --workspace shared && npm run start:dev --workspace worker",
@@ -25,8 +26,8 @@
     "infra:up": "docker compose up -d mongodb redis",
     "infra:down": "docker compose stop mongodb redis",
     "infra:logs": "docker compose logs -f mongodb redis",
-    "docker:up": "docker compose up -d --build",
+    "docker:up": "npm run env:setup && docker compose up -d --build",
     "docker:down": "docker compose down",
-    "docker:logs": "docker compose logs -f backend worker mongodb redis"
+    "docker:logs": "docker compose logs -f frontend backend worker mongodb redis"
   }
 }

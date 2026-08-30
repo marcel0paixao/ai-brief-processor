@@ -9,11 +9,16 @@ Esta documentação descreve o estado atual do projeto. O fluxo de processamento
 Já estão disponíveis:
 
 - API NestJS com criação e CRUD de briefs;
+- autenticação por e-mail e senha com hash `scrypt` e sessão JWT;
+- RBAC com os papéis `ADMIN` e `MEMBER`;
+- multi-tenancy com tenant resolvido no servidor e isolamento em todas as consultas;
 - persistência de briefs e status no MongoDB;
 - publicação de jobs no BullMQ;
 - Redis com persistência AOF;
 - contratos compartilhados entre API e worker;
-- backend e worker como serviços Docker separados;
+- frontend funcional com login, criação de workspace, gestão de equipe, filtros,
+  paginação, criação, detalhe, edição administrativa e polling;
+- frontend, backend e worker como serviços Docker separados;
 - testes unitários e end-to-end do backend.
 
 O workspace do worker é intencionalmente apenas um scaffold Node.js. Ele inicia, conecta ao MongoDB e encerra a conexão de forma graciosa, mas ainda não registra um consumidor BullMQ. Enquanto essa implementação não existir, jobs publicados pela API permanecem aguardando no Redis e briefs permanecem em `PENDING`.
@@ -21,20 +26,22 @@ O workspace do worker é intencionalmente apenas um scaffold Node.js. Ele inicia
 ## Arquitetura atual
 
 ```text
-React/Vite
+React/Vite + Nginx
     |
-    | HTTP
+    | /api
     v
 NestJS API ----> MongoDB
     |
-    | job { briefId }
+    | job { briefId, tenantId }
     v
 Redis/BullMQ ----> Node.js Worker (processor pendente)
                          |
                          +----> LLM (integração pendente)
 ```
 
-O MongoDB armazena o brief, status, resultado e erro. O Redis transporta apenas o identificador do brief.
+O MongoDB armazena tenants, usuários, briefs, status, resultado e erro. O Redis
+transporta os identificadores do brief e do tenant. O cliente nunca informa o
+tenant nas operações: a API sempre o deriva do usuário autenticado.
 
 ## Stack
 
@@ -50,8 +57,8 @@ O MongoDB armazena o brief, status, resultado e erro. O Redis transporta apenas 
 ## Estrutura
 
 ```text
-frontend/            aplicação React + Vite
-backend/             API HTTP NestJS
+frontend/            aplicação React + Vite, autenticação e imagem Nginx
+backend/             API HTTP NestJS, JWT, RBAC e escopo multi-tenant
 worker/              processo Node.js separado; processor ainda pendente
 shared/              contratos de domínio e da fila
 docker-compose.yml   MongoDB, Redis, backend e worker
@@ -76,12 +83,13 @@ nvm use
 
 ## Inicialização completa com Docker
 
-Este modo inicia MongoDB, Redis, API e o scaffold do worker.
+Este modo inicia frontend, MongoDB, Redis, API e o scaffold do worker.
 
-Na primeira execução, crie o arquivo de ambiente da raiz sem sobrescrever um arquivo já configurado:
+Na primeira execução, prepare o ambiente. O comando preserva valores existentes,
+cria arquivos ausentes e gera `JWT_SECRET` sem exibir seu valor:
 
 ```bash
-cp -n .env.example .env
+npm run env:setup
 npm run docker:up
 ```
 
@@ -92,17 +100,11 @@ docker compose ps
 npm run docker:logs
 ```
 
-A API ficará disponível em <http://localhost:3000>.
+- Frontend: <http://localhost:5173>
+- API: <http://localhost:3000>
 
-O frontend ainda é executado diretamente no WSL:
-
-```bash
-npm install
-cp frontend/.env.example frontend/.env
-npm run dev:frontend
-```
-
-Frontend: <http://localhost:5173>
+No container, o Nginx do frontend encaminha `/api` para o backend. Assim, o
+navegador acessa a interface e a API pela mesma origem.
 
 Para encerrar toda a stack Docker:
 
@@ -110,7 +112,8 @@ Para encerrar toda a stack Docker:
 npm run docker:down
 ```
 
-Escolha entre backend no Docker ou backend direto no WSL. Executar os dois ao mesmo tempo causa conflito na porta `3000`.
+Escolha entre a stack Docker ou os processos diretos no WSL. Executar os dois
+modos ao mesmo tempo causa conflito nas portas `3000` e `5173`.
 
 ## Desenvolvimento no WSL
 
@@ -123,9 +126,7 @@ npm install
 Crie os arquivos locais de ambiente na primeira execução:
 
 ```bash
-cp -n backend/.env.example backend/.env
-cp -n worker/.env.example worker/.env
-cp -n frontend/.env.example frontend/.env
+npm run env:setup
 ```
 
 Inicie somente MongoDB e Redis:
@@ -164,6 +165,8 @@ MONGODB_URI=mongodb://localhost:27017/ai_brief_processor
 REDIS_HOST=localhost
 REDIS_PORT=6379
 REDIS_DB=0
+JWT_SECRET=replace-with-a-long-random-secret
+JWT_EXPIRES_IN_SECONDS=28800
 OPENROUTER_API_KEY=
 OPENROUTER_MODEL=openrouter/free
 OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
@@ -180,6 +183,53 @@ REDIS_HOST=redis
 
 Nenhuma chave real deve ser enviada ao repositório.
 
+Em produção, `JWT_SECRET` é obrigatório. Use um valor longo, aleatório e
+exclusivo por ambiente. Alterar esse segredo invalida todas as sessões ativas.
+
+## Autenticação, papéis e tenants
+
+O cadastro público (`POST /auth/register`) cria atomicamente do ponto de vista
+da aplicação um tenant e seu primeiro administrador. Em caso de falha ao criar
+o usuário, o tenant recém-criado é compensado e removido. O login retorna um
+Bearer token com validade configurável; `GET /auth/me` restaura a sessão.
+
+O token contém somente o identificador do usuário. Em cada request, a API busca
+o usuário ativo e seu tenant no MongoDB. Portanto, mudanças de papel e
+desativação têm efeito imediato, sem confiar em `tenantId` ou `role` enviados
+pelo navegador.
+
+Permissões atuais:
+
+| Operação | MEMBER | ADMIN |
+| --- | :---: | :---: |
+| Criar, listar e consultar briefs do tenant | Sim | Sim |
+| Editar ou excluir briefs do tenant | Não | Sim |
+| Listar, criar, promover e desativar usuários | Não | Sim |
+
+O administrador não pode desativar nem rebaixar a própria conta. Usuários e
+briefs de outro tenant não são retornados, inclusive quando um ID válido é
+informado diretamente.
+
+### Endpoints principais
+
+```text
+POST   /auth/register       cria tenant + primeiro ADMIN
+POST   /auth/login          autentica por e-mail e senha
+GET    /auth/me             retorna a sessão atual
+GET    /users               lista usuários do tenant (ADMIN)
+POST   /users               cria usuário no tenant (ADMIN)
+PATCH  /users/:id           altera papel/estado/nome (ADMIN)
+POST   /briefs              cria e agenda um brief
+GET    /briefs              lista filtrada e paginada
+GET    /briefs/:id          detalhe do tenant atual
+PATCH  /briefs/:id          edição (ADMIN)
+DELETE /briefs/:id          exclusão (ADMIN)
+```
+
+`GET /briefs` aceita `search`, `status`, `dateFrom`, `dateTo`, `sortBy`,
+`sortOrder`, `page` e `limit` (máximo 50). A resposta inclui totais por status e
+metadados de paginação.
+
 ## Comandos
 
 ```bash
@@ -187,12 +237,13 @@ npm run build          # build de shared, backend, worker e frontend
 npm run lint           # valida os quatro workspaces
 npm test               # testes unitários do backend
 npm run test:e2e       # testes HTTP com MongoDB e Redis ativos
+npm run env:setup      # cria .envs e gera JWT_SECRET sem sobrescrever valores
 
 npm run infra:up       # inicia apenas MongoDB e Redis
 npm run infra:logs
 npm run infra:down
 
-npm run docker:up      # constrói e inicia backend, worker, MongoDB e Redis
+npm run docker:up      # constrói e inicia frontend, backend, worker, MongoDB e Redis
 npm run docker:logs
 npm run docker:down
 ```
@@ -216,6 +267,17 @@ O custo é manter mais um workspace e decidir conscientemente quais contratos pe
 A API grava o brief no MongoDB antes de publicar seu ID no Redis. Assim o worker sempre recebe uma referência a um registro existente.
 
 MongoDB e Redis não participam da mesma transação. Uma queda da API entre as duas operações pode deixar um brief `PENDING` sem job. Uma solução futura pode usar reconciliação ou Transactional Outbox; isso não está implementado.
+
+### Sessão e isolamento multi-tenant
+
+A autenticação usa access token JWT com duração padrão de oito horas. O logout
+remove o token do navegador; não há refresh token persistido. Recuperação de
+senha e convites por e-mail exigiriam um provedor de e-mail e ficam fora do
+escopo atual.
+
+O isolamento é feito por chave de tenant em todas as queries de briefs e
+usuários, além de índices compostos por `tenantId`. IDs de tenant recebidos do
+cliente são rejeitados pela validação global da API.
 
 ### Docker e desenvolvimento local
 
@@ -242,14 +304,26 @@ O Codex foi usado de forma extensiva como apoio para scaffold, tarefas mecânica
 
 As decisões de stack, uso de WSL/NPM, prioridade do fluxo básico, separação entre API e worker e substituição de NestJS por Node.js no worker foram tomadas pelo candidato. A implementação central do processor e as decisões de confiabilidade correspondentes permanecem sob responsabilidade do candidato.
 
+## Frontend
+
+A interface oferece:
+
+- formulário com validações alinhadas aos DTOs da API;
+- login, cadastro do primeiro workspace e restauração de sessão;
+- navegação e ações condicionadas ao papel do usuário;
+- gestão de usuários para administradores;
+- lista com busca, status, período, ordenação, paginação e atualização periódica;
+- detalhe com polling para estados `PENDING` e `PROCESSING`;
+- visualização do resultado estruturado e dos erros persistidos;
+- execução local pelo Vite ou conteinerizada com Nginx.
+
 ## Limitações conhecidas
 
 - o worker ainda não consome jobs;
 - não existe integração funcional com LLM;
-- o frontend ainda não implementa o fluxo final;
 - não existe endpoint manual de retry;
 - não existe reconciliação para briefs sem job;
-- o frontend não está no Compose;
 - o worker ainda não possui healthcheck próprio.
+- não há refresh token, recuperação de senha ou envio de convites por e-mail;
 
 A prioridade é concluir primeiro o fluxo funcional de ponta a ponta e somente depois avaliar bônus.
