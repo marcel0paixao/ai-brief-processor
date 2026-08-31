@@ -1,4 +1,4 @@
-import 'dotenv/config';
+import './load-env';
 import { BRIEF_ANALYSIS_QUEUE } from '@ai-brief/shared';
 import type { AnalyzeBriefJobData } from '@ai-brief/shared';
 import { Worker } from 'bullmq';

@@ -20,7 +20,7 @@ A API, o contrato em `shared`, o schema Mongo e o polling do frontend já estão
 - `jobId = briefId` (idempotência na criação).
 - Producer já usa 3 tentativas e backoff exponencial de 2 s.
 - Documento já tem `status`, `result`, `error` (`code`, `message`, `retryable`), `attemptCount`, `processingStartedAt`, `completedAt`.
-- Variáveis `OPENROUTER_*` e `LLM_TIMEOUT_MS` já existem no Compose e nos `.env`.
+- Variáveis `OPENROUTER_*`, `LLM_TIMEOUT_MS` e `WORKER_CONCURRENCY` ficam exclusivamente em `worker/.env`, também carregado pelo Compose.
 - Frontend já faz polling em `PENDING` e `PROCESSING`.
 
 ## Esforço estimado

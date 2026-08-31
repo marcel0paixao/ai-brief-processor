@@ -459,7 +459,7 @@ Injetar `llm` e `repo` no processor (parâmetro ou factory). Não bater Redis/Mo
 
 **Entrega:** checklist manual, não código novo obrigatório.
 
-1. `npm run env:setup` e preencher `OPENROUTER_API_KEY`.
+1. `npm run env:setup` e preencher `OPENROUTER_API_KEY` somente em `worker/.env`.
 2. `npm run infra:up` + `dev:backend` + `dev:worker` + `dev:frontend`.
 3. Registrar tenant, criar brief ≥ 20 caracteres.
 4. Detalhe: `PENDING` → `PROCESSING` → `COMPLETED` com as seis seções.

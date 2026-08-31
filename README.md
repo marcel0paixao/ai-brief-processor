@@ -148,7 +148,8 @@ npm run dev:frontend
 - MongoDB: `localhost:27017`
 - Redis: `localhost:6379`
 
-O comando `dev:worker` inicia apenas o scaffold. Ele não consome a fila até que o processor seja implementado.
+O comando `dev:worker` inicia o consumidor BullMQ, que processa os briefs com o
+OpenRouter e persiste o resultado validado no MongoDB.
 
 Para encerrar somente a infraestrutura:
 
@@ -158,7 +159,20 @@ npm run infra:down
 
 ## Variáveis de ambiente
 
-Principais variáveis:
+`npm run env:setup` cria e preserva arquivos separados por responsabilidade:
+
+- `.env`: valores gerais usados pelo Docker Compose;
+- `backend/.env`: autenticação e conexões do backend no modo de desenvolvimento;
+- `worker/.env`: OpenRouter, timeout e concorrência do worker em qualquer modo;
+- `frontend/.env`: URL da API usada pelo Vite.
+
+O worker local carrega `worker/.env` para as opções exclusivas de IA e o `.env`
+da raiz para MongoDB e Redis. O arquivo do worker é carregado primeiro, sem
+sobrescrever variáveis já definidas pelo sistema. No Docker, o Compose injeta
+`worker/.env` por meio de `env_file` e fornece as conexões internas dos serviços
+separadamente. Assim, nenhuma variável é repetida entre os dois arquivos.
+
+Configuração geral e do backend:
 
 ```env
 MONGODB_URI=mongodb://localhost:27017/ai_brief_processor
@@ -167,11 +181,17 @@ REDIS_PORT=6379
 REDIS_DB=0
 JWT_SECRET=replace-with-a-long-random-secret
 JWT_EXPIRES_IN_SECONDS=28800
+VITE_API_URL=http://localhost:3000
+```
+
+Configuração exclusiva de `worker/.env`:
+
+```env
 OPENROUTER_API_KEY=
 OPENROUTER_MODEL=openrouter/free
 OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
 LLM_TIMEOUT_MS=30000
-VITE_API_URL=http://localhost:3000
+WORKER_CONCURRENCY=2
 ```
 
 Dentro do Compose, os hosts são os nomes dos serviços:
