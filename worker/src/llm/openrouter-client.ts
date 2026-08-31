@@ -1,0 +1,199 @@
+import type { BriefAnalysisResult } from '@ai-brief/shared';
+import { z } from 'zod';
+import { config } from '../config';
+import { ProcessingError } from '../errors/processing-error';
+import {
+  briefAnalysisJsonSchema,
+  briefAnalysisSchema,
+} from './analysis-schema';
+
+const openRouterEnvelopeSchema = z.object({
+  choices: z
+    .array(
+      z.object({
+        message: z.object({
+          content: z.string().min(1),
+        }),
+      }),
+    )
+    .min(1),
+});
+
+function extractMessageContent(payload: unknown): string {
+  const parsed = openRouterEnvelopeSchema.safeParse(payload);
+
+  if (!parsed.success) {
+    throw new ProcessingError(
+      'LLM_INVALID_RESPONSE',
+      'A IA devolveu uma resposta que não pôde ser interpretada.',
+      true,
+      { cause: parsed.error },
+    );
+  }
+
+  return parsed.data.choices[0].message.content;
+}
+
+function getChatCompletionsUrl(baseUrl: string): string {
+  const normalizedBaseUrl = baseUrl.replace(/\/+$/, '');
+  return normalizedBaseUrl.endsWith('/chat/completions')
+    ? normalizedBaseUrl
+    : `${normalizedBaseUrl}/chat/completions`;
+}
+
+function isTimeoutError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    (error.name === 'TimeoutError' || error.name === 'AbortError')
+  );
+}
+
+function throwHttpError(status: number): never {
+  if (status === 401 || status === 403) {
+    throw new ProcessingError(
+      'LLM_AUTH_ERROR',
+      'Chave inválida ou sem permissão.',
+      false,
+    );
+  }
+
+  if (status === 408) {
+    throw new ProcessingError(
+      'LLM_TIMEOUT',
+      'O provider ultrapassou o tempo limite.',
+      true,
+    );
+  }
+
+  if (status === 429) {
+    throw new ProcessingError(
+      'LLM_RATE_LIMITED',
+      'O limite temporário de requisições do provider foi atingido.',
+      true,
+    );
+  }
+
+  if (status >= 500) {
+    throw new ProcessingError(
+      'LLM_UNAVAILABLE',
+      'O provider está temporariamente indisponível.',
+      true,
+    );
+  }
+
+  throw new ProcessingError(
+    'LLM_REQUEST_INVALID',
+    'O provider rejeitou o modelo, o schema ou a requisição.',
+    false,
+  );
+}
+
+export async function analyzeBrief(input: {
+  title: string;
+  brief: string;
+}): Promise<BriefAnalysisResult> {
+  const systemMessage = {
+    role: 'system',
+    content: `
+        Você analisa briefings de marketing. Responda somente conforme o JSON Schema.
+        Não invente fatos, datas, métricas ou características que não estejam no
+        briefing. Quando uma informação não estiver disponível, explicite essa
+        limitação. Produza conteúdo objetivo em português do Brasil.
+    `,
+  };
+  const userMessage = {
+    role: 'user',
+    content: `
+        TÍTULO: ${input.title}
+        BRIEFING: ${input.brief}
+    `,
+  };
+
+  let response: Response;
+
+  try {
+    response = await fetch(getChatCompletionsUrl(config.openRouterBaseUrl), {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${config.openRouterApiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: config.openRouterModel,
+        messages: [systemMessage, userMessage],
+        temperature: 0.2,
+        stream: false,
+        provider: {
+          require_parameters: true,
+        },
+        response_format: {
+          type: 'json_schema',
+          json_schema: {
+            name: 'brief_analysis',
+            strict: true,
+            schema: briefAnalysisJsonSchema,
+          },
+        },
+      }),
+      signal: AbortSignal.timeout(config.llmTimeoutMs),
+    });
+  } catch (error) {
+    if (isTimeoutError(error)) {
+      throw new ProcessingError(
+        'LLM_TIMEOUT',
+        'O provider ultrapassou o tempo limite.',
+        true,
+        { cause: error },
+      );
+    }
+
+    throw new ProcessingError(
+      'LLM_UNAVAILABLE',
+      'Não foi possível acessar o provider.',
+      true,
+      { cause: error },
+    );
+  }
+
+  if (!response.ok) {
+    throwHttpError(response.status);
+  }
+
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch (error) {
+    throw new ProcessingError(
+      'LLM_INVALID_RESPONSE',
+      'A IA devolveu uma resposta que não pôde ser interpretada.',
+      true,
+      { cause: error },
+    );
+  }
+
+  const content = extractMessageContent(payload);
+
+  let parsedJson: unknown;
+  try {
+    parsedJson = JSON.parse(content);
+  } catch (error) {
+    throw new ProcessingError(
+      'LLM_INVALID_RESPONSE',
+      'A IA devolveu uma resposta que não pôde ser interpretada.',
+      true,
+      { cause: error },
+    );
+  }
+
+  const validated = briefAnalysisSchema.safeParse(parsedJson);
+  if (!validated.success) {
+    throw new ProcessingError(
+      'LLM_INVALID_RESPONSE',
+      'A IA devolveu uma análise fora do formato esperado.',
+      true,
+      { cause: validated.error },
+    );
+  }
+
+  return validated.data;
+}

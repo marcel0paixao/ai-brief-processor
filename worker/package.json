@@ -8,14 +8,16 @@
     "start": "node dist/main.js",
     "start:dev": "tsx watch src/main.ts",
     "start:prod": "node dist/main.js",
-    "lint": "tsc --noEmit -p tsconfig.json"
+    "lint": "tsc --noEmit -p tsconfig.json",
+    "test": "tsx --test test/brief-processor.test.ts"
   },
   "dependencies": {
     "@ai-brief/shared": "*",
     "bullmq": "^6.3.1",
     "dotenv": "^17.4.1",
     "ioredis": "^6.0.0",
-    "mongoose": "^9.9.4"
+    "mongoose": "^9.9.4",
+    "zod": "^4.5.4"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
