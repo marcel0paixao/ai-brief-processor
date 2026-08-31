@@ -1113,6 +1113,11 @@
   font-weight: 800;
 }
 
+.failed-actions {
+  display: flex;
+  margin-top: 22px;
+}
+
 .original-brief-card {
   overflow: hidden;
 }

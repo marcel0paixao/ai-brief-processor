@@ -242,6 +242,7 @@ PATCH  /users/:id           altera papel/estado/nome (ADMIN)
 POST   /briefs              cria e agenda um brief
 GET    /briefs              lista filtrada e paginada
 GET    /briefs/:id          detalhe do tenant atual
+POST   /briefs/:id/retry    reenvia falha recuperável
 PATCH  /briefs/:id          edição (ADMIN)
 DELETE /briefs/:id          exclusão (ADMIN)
 ```
@@ -249,6 +250,33 @@ DELETE /briefs/:id          exclusão (ADMIN)
 `GET /briefs` aceita `search`, `status`, `dateFrom`, `dateTo`, `sortBy`,
 `sortOrder`, `page` e `limit` (máximo 50). A resposta inclui totais por status e
 metadados de paginação.
+
+### Teste de falhas do worker no Docker
+
+Alterações em `worker/.env` exigem recriar o container. `docker compose restart`
+reinicia o mesmo container e não relê o `env_file`; use:
+
+```bash
+docker compose up -d --force-recreate --no-deps worker
+docker compose exec -T worker printenv LLM_TIMEOUT_MS
+```
+
+O último comando confere apenas o timeout. Nunca imprima
+`OPENROUTER_API_KEY` no terminal ou nos logs.
+
+Um `docker compose stop worker` envia `SIGTERM`. O encerramento é gracioso e
+aguarda a chamada ativa; portanto, essa chamada ainda pode terminar ou atingir
+o timeout configurado. Para simular crash no cenário 12.6, use somente em
+ambiente de teste:
+
+```bash
+docker compose kill --signal KILL worker
+docker compose up -d worker
+```
+
+Nesse caso, o BullMQ retoma o job depois que o lock expira e o identifica como
+stalled. O botão **Tentar novamente** aparece no detalhe apenas para erros
+persistidos com `retryable: true`.
 
 ## Comandos
 
@@ -301,22 +329,17 @@ cliente são rejeitados pela validação global da API.
 
 ### Docker e desenvolvimento local
 
-Docker Compose oferece uma execução reproduzível da infraestrutura, API e worker. O frontend continua local para preservar um ciclo de desenvolvimento rápido.
+Docker Compose oferece uma execução reproduzível de frontend, API, worker,
+MongoDB e Redis. O frontend também pode rodar pelo Vite durante o desenvolvimento.
 
-## Worker: responsabilidades ainda pendentes
+## Worker
 
-A implementação do worker deve definir e justificar:
-
-1. criação da instância `Worker` do BullMQ;
-2. acesso à collection de briefs;
-3. transições `PENDING → PROCESSING → COMPLETED/FAILED`;
-4. timeout e retries;
-5. validação da resposta do LLM;
-6. tratamento de execução duplicada;
-7. recuperação após reinício;
-8. logs e erros visíveis;
-9. encerramento da conexão BullMQ;
-10. testes do comportamento escolhido.
+O worker consome a fila BullMQ, aplica transições atômicas por brief e tenant,
+chama o OpenRouter com timeout, valida o envelope e o resultado com Zod e
+persiste erros estáveis. Erros temporários usam as três tentativas da fila;
+erros de autenticação ou requisição são encerrados sem chamadas adicionais.
+Registros `COMPLETED` são terminais, e atualizações tardias não conseguem
+substituir o resultado persistido.
 
 ## Uso de ferramentas de IA
 
@@ -335,15 +358,16 @@ A interface oferece:
 - lista com busca, status, período, ordenação, paginação e atualização periódica;
 - detalhe com polling para estados `PENDING` e `PROCESSING`;
 - visualização do resultado estruturado e dos erros persistidos;
+- retry manual para falhas recuperáveis;
 - execução local pelo Vite ou conteinerizada com Nginx.
 
 ## Limitações conhecidas
 
-- o worker ainda não consome jobs;
-- não existe integração funcional com LLM;
-- não existe endpoint manual de retry;
 - não existe reconciliação para briefs sem job;
+- não existe cancelamento de job quando um brief em processamento é alterado ou excluído;
 - o worker ainda não possui healthcheck próprio.
+- disponibilidade e rate limit do modelo gratuito do OpenRouter são externos à aplicação;
 - não há refresh token, recuperação de senha ou envio de convites por e-mail;
 
-A prioridade é concluir primeiro o fluxo funcional de ponta a ponta e somente depois avaliar bônus.
+O fluxo funcional de ponta a ponta e o retry manual estão implementados; os
+itens acima permanecem como evoluções de confiabilidade e operação.

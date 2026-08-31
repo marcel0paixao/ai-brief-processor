@@ -136,6 +136,77 @@ export class BriefsService {
     return { id: briefId, status: createdBrief.status };
   }
 
+  async retry(
+    id: string,
+    currentUser: AuthenticatedUser,
+  ): Promise<BriefDetailDto> {
+    const tenantId = new Types.ObjectId(currentUser.tenantId);
+    const brief = await this.findByIdOrThrow(id, currentUser.tenantId);
+
+    if (
+      brief.status !== BriefStatus.FAILED ||
+      brief.error?.retryable !== true
+    ) {
+      throw new BadRequestException(
+        'Only failed briefs with a retryable error can be retried',
+      );
+    }
+
+    const pendingBrief = await this.briefModel
+      .findOneAndUpdate(
+        {
+          _id: brief._id,
+          tenantId,
+          status: BriefStatus.FAILED,
+          'error.retryable': true,
+        },
+        {
+          $set: {
+            status: BriefStatus.PENDING,
+            updatedAt: new Date(),
+          },
+          $unset: {
+            error: '',
+            result: '',
+            processingStartedAt: '',
+            completedAt: '',
+          },
+        },
+        { returnDocument: 'after' },
+      )
+      .exec();
+
+    if (!pendingBrief) {
+      throw new BadRequestException(
+        'The brief changed state and can no longer be retried',
+      );
+    }
+
+    try {
+      await this.briefsQueueService.retryAnalysis(id, currentUser.tenantId);
+    } catch {
+      await this.briefModel
+        .updateOne(
+          { _id: brief._id, tenantId, status: BriefStatus.PENDING },
+          {
+            $set: {
+              status: BriefStatus.FAILED,
+              error: queueUnavailableError,
+            },
+          },
+        )
+        .exec();
+
+      throw new ServiceUnavailableException({
+        code: queueUnavailableError.code,
+        message: queueUnavailableError.message,
+        briefId: id,
+      });
+    }
+
+    return toDetail(pendingBrief);
+  }
+
   async findAll(
     query: BriefQueryDto,
     currentUser: AuthenticatedUser,

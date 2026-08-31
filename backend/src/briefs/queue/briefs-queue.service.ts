@@ -21,4 +21,11 @@ export class BriefsQueueService {
       { jobId: briefId },
     );
   }
+
+  async retryAnalysis(briefId: string, tenantId: string): Promise<void> {
+    // BullMQ keeps terminal jobs by default. Remove the previous job so the
+    // stable jobId can be reused without creating duplicate IDs.
+    await this.queue.remove(briefId);
+    await this.enqueueAnalysis(briefId, tenantId);
+  }
 }

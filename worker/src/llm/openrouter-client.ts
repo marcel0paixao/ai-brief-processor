@@ -184,6 +184,15 @@ export async function analyzeBrief(input: {
   try {
     payload = await response.json();
   } catch (error) {
+    if (isTimeoutError(error)) {
+      throw new ProcessingError(
+        'LLM_TIMEOUT',
+        'O provider ultrapassou o tempo limite.',
+        true,
+        { cause: error },
+      );
+    }
+
     throw new ProcessingError(
       'LLM_INVALID_RESPONSE',
       'A IA devolveu uma resposta que não pôde ser interpretada.',

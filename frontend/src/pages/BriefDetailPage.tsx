@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import {
   deleteBrief,
   getBrief,
+  retryBrief,
   updateBrief,
   type BriefAnalysisResult,
   type BriefDetail,
@@ -63,6 +64,7 @@ export function BriefDetailPage({ briefId, isAdmin, onBack, onDeleted }: BriefDe
   const [editing, setEditing] = useState(false)
   const [saving, setSaving] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  const [retrying, setRetrying] = useState(false)
   const [editTitle, setEditTitle] = useState('')
   const [editBrief, setEditBrief] = useState('')
   const [error, setError] = useState<string>()
@@ -168,6 +170,25 @@ export function BriefDetailPage({ briefId, isAdmin, onBack, onDeleted }: BriefDe
     }
   }
 
+  async function retryProcessing() {
+    if (!brief?.error?.retryable) return
+
+    setRetrying(true)
+    setError(undefined)
+
+    try {
+      setBrief(await retryBrief(brief.id))
+    } catch (requestError) {
+      setError(
+        requestError instanceof Error
+          ? requestError.message
+          : 'Não foi possível reenviar a análise para processamento.',
+      )
+    } finally {
+      setRetrying(false)
+    }
+  }
+
   if (loading) {
     return (
       <div className="loading-page">
@@ -262,6 +283,18 @@ export function BriefDetailPage({ briefId, isAdmin, onBack, onDeleted }: BriefDe
                   <div><dt>Código</dt><dd>{brief.error?.code ?? 'UNKNOWN_ERROR'}</dd></div>
                   <div><dt>Pode tentar novamente?</dt><dd>{brief.error?.retryable ? 'Sim' : 'Não'}</dd></div>
                 </dl>
+                {brief.error?.retryable && (
+                  <div className="failed-actions">
+                    <button
+                      className="button button-primary"
+                      type="button"
+                      onClick={() => void retryProcessing()}
+                      disabled={retrying}
+                    >
+                      {retrying ? <><span className="loader loader-small" /> Reenviando…</> : 'Tentar novamente'}
+                    </button>
+                  </div>
+                )}
               </div>
             </section>
           ) : (

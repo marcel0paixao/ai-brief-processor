@@ -278,6 +278,12 @@ export function createBrief(input: CreateBriefInput): Promise<CreateBriefRespons
   })
 }
 
+export function retryBrief(briefId: string): Promise<BriefDetail> {
+  return request<BriefDetail>(`/briefs/${encodeURIComponent(briefId)}/retry`, {
+    method: 'POST',
+  })
+}
+
 export function updateBrief(
   briefId: string,
   input: UpdateBriefInput,
