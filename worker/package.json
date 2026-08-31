@@ -9,7 +9,7 @@
     "start:dev": "tsx watch src/main.ts",
     "start:prod": "node dist/main.js",
     "lint": "tsc --noEmit -p tsconfig.json",
-    "test": "tsx --test test/brief-processor.test.ts"
+    "test": "tsx --test test/*.test.ts"
   },
   "dependencies": {
     "@ai-brief/shared": "*",
