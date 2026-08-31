@@ -370,7 +370,8 @@
 .section-heading h2,
 .metadata-card h2,
 .processing-panel h2,
-.failed-panel h2 {
+.failed-panel h2,
+.insufficient-panel h2 {
   margin: 0;
   color: var(--ink);
   font-size: 20px;
@@ -967,8 +968,16 @@
   background: var(--cyan);
 }
 
+.result-empty {
+  margin: 0;
+  color: #7b8497;
+  font-size: 13px;
+  font-style: italic;
+}
+
 .processing-panel,
-.failed-panel {
+.failed-panel,
+.insufficient-panel {
   display: grid;
   min-height: 280px;
   grid-template-columns: 190px 1fr;
@@ -981,13 +990,15 @@
 }
 
 .processing-panel h2,
-.failed-panel h2 {
+.failed-panel h2,
+.insufficient-panel h2 {
   margin-top: 2px;
   font-size: 25px;
 }
 
 .processing-panel p,
-.failed-panel p {
+.failed-panel p,
+.insufficient-panel p {
   margin: 10px 0 0;
   color: #657087;
   font-size: 13px;
@@ -1114,6 +1125,46 @@
 }
 
 .failed-actions {
+  display: flex;
+  margin-top: 22px;
+}
+
+.insufficient-panel {
+  display: grid;
+  min-height: auto;
+  grid-template-columns: 64px 1fr;
+  align-items: start;
+  gap: 28px;
+  padding: 34px;
+  border: 1px solid #f0d998;
+  border-radius: 18px;
+  background: #fffbef;
+}
+
+.insufficient-icon {
+  display: grid;
+  width: 52px;
+  height: 52px;
+  place-items: center;
+  color: #8a6410;
+  border: 1px solid #ead18a;
+  border-radius: 16px;
+  background: #fff;
+  font-size: 25px;
+  font-weight: 900;
+}
+
+.insufficient-panel .eyebrow {
+  color: #8a6410;
+}
+
+.insufficient-panel h3 {
+  margin: 20px 0 10px;
+  color: #4f421f;
+  font-size: 13px;
+}
+
+.insufficient-actions {
   display: flex;
   margin-top: 22px;
 }
@@ -1586,7 +1637,7 @@
   .form-actions .button { flex: 1; }
   .result-grid { grid-template-columns: 1fr; }
   .result-wide { grid-column: auto; }
-  .processing-panel, .failed-panel { grid-template-columns: 1fr; gap: 24px; padding: 28px 22px; }
+  .processing-panel, .failed-panel, .insufficient-panel { grid-template-columns: 1fr; gap: 24px; padding: 28px 22px; }
   .processing-visual { width: 140px; height: 140px; }
   .failed-icon { width: 52px; }
   .metadata-card dl { grid-template-columns: 1fr; }

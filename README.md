@@ -2,7 +2,7 @@
 
 Aplicação do desafio técnico Full Stack Developer — Platform & AI da Maestria.
 
-Esta documentação descreve o estado atual do projeto. O fluxo de processamento por LLM ainda não está concluído.
+Esta documentação descreve o estado atual e executável do projeto.
 
 ## Estado atual
 
@@ -17,11 +17,11 @@ Já estão disponíveis:
 - Redis com persistência AOF;
 - contratos compartilhados entre API e worker;
 - frontend funcional com login, criação de workspace, gestão de equipe, filtros,
-  paginação, criação, detalhe, edição administrativa e polling;
+  paginação, criação, detalhe, edição administrativa, retry e polling;
 - frontend, backend e worker como serviços Docker separados;
-- testes unitários e end-to-end do backend.
-
-O workspace do worker é intencionalmente apenas um scaffold Node.js. Ele inicia, conecta ao MongoDB e encerra a conexão de forma graciosa, mas ainda não registra um consumidor BullMQ. Enquanto essa implementação não existir, jobs publicados pela API permanecem aguardando no Redis e briefs permanecem em `PENDING`.
+- consumidor BullMQ com OpenRouter, timeout, validação de schema, retries e
+  persistência de erros classificados;
+- testes unitários e end-to-end do backend e testes unitários do worker.
 
 ## Arquitetura atual
 
@@ -34,9 +34,9 @@ NestJS API ----> MongoDB
     |
     | job { briefId, tenantId }
     v
-Redis/BullMQ ----> Node.js Worker (processor pendente)
+Redis/BullMQ ----> Node.js Worker
                          |
-                         +----> LLM (integração pendente)
+                         +----> OpenRouter / LLM
 ```
 
 O MongoDB armazena tenants, usuários, briefs, status, resultado e erro. O Redis
@@ -50,7 +50,7 @@ tenant nas operações: a API sempre o deriva do usuário autenticado.
 - Worker: Node.js, TypeScript, BullMQ e Mongoose
 - Dados: MongoDB
 - Fila: BullMQ e Redis
-- LLM planejado: OpenRouter, com modelo configurável por ambiente
+- LLM: OpenRouter, com modelo configurável por ambiente
 - Monorepo: NPM Workspaces
 - Infraestrutura local: Docker Compose
 
@@ -59,7 +59,7 @@ tenant nas operações: a API sempre o deriva do usuário autenticado.
 ```text
 frontend/            aplicação React + Vite, autenticação e imagem Nginx
 backend/             API HTTP NestJS, JWT, RBAC e escopo multi-tenant
-worker/              processo Node.js separado; processor ainda pendente
+worker/              consumidor BullMQ, integração LLM e persistência de estado
 shared/              contratos de domínio e da fila
 docker-compose.yml   MongoDB, Redis, backend e worker
 ```
@@ -83,7 +83,7 @@ nvm use
 
 ## Inicialização completa com Docker
 
-Este modo inicia frontend, MongoDB, Redis, API e o scaffold do worker.
+Este modo inicia frontend, MongoDB, Redis, API e worker.
 
 Na primeira execução, prepare o ambiente. O comando preserva valores existentes,
 cria arquivos ausentes e gera `JWT_SECRET` sem exibir seu valor:
@@ -242,7 +242,7 @@ PATCH  /users/:id           altera papel/estado/nome (ADMIN)
 POST   /briefs              cria e agenda um brief
 GET    /briefs              lista filtrada e paginada
 GET    /briefs/:id          detalhe do tenant atual
-POST   /briefs/:id/retry    reenvia falha recuperável
+POST   /briefs/:id/retry    reenvia falha recuperável ou brief insuficiente corrigido
 PATCH  /briefs/:id          edição (ADMIN)
 DELETE /briefs/:id          exclusão (ADMIN)
 ```
@@ -341,6 +341,48 @@ erros de autenticação ou requisição são encerrados sem chamadas adicionais.
 Registros `COMPLETED` são terminais, e atualizações tardias não conseguem
 substituir o resultado persistido.
 
+### Observabilidade
+
+Cada job usa o próprio `briefId` como `jobId`, o que permite correlacionar API,
+BullMQ, MongoDB e interface sem um identificador paralelo. A API registra a
+publicação e a republicação na fila; o worker registra início, conclusão,
+falha de tentativa e job stalled com `jobId`, `briefId`, `tenantId`, tentativa,
+limite de tentativas, próximo estado e código/mensagem de erro quando aplicável.
+Os logs nunca incluem o texto do briefing, respostas do LLM ou segredos.
+
+No produto, o detalhe exibe status, quantidade de tentativas e o erro persistido
+(`code`, `message` e `retryable`). Assim, o mesmo erro fica identificável tanto
+para o usuário quanto para quem opera a stack com `npm run docker:logs`.
+
+Para produção, os próximos passos seriam emitir JSON em linha para um coletor,
+adicionar métricas de duração/taxa de falha por código e tracing distribuído.
+Esses itens são conscientemente deixados fora do escopo local do desafio.
+
+### Prompt, grounding e briefings insuficientes
+
+O prompt separa instruções de sistema do título e do briefing delimitados,
+trata o conteúdo enviado pelo usuário como dado não confiável e proíbe inventar
+público, pilares, canais, métricas ou atributos. A temperatura é `0.2`, e o
+provider recebe um JSON Schema estrito que depois é validado novamente com Zod.
+
+O resultado é discriminado por `outcome`:
+
+- `ANALYZED` contém resumo, objetivo, público, pilares, ações e riscos;
+- `INSUFFICIENT_BRIEF` contém somente o motivo e as informações necessárias
+  para tornar a entrada analisável.
+
+Texto obviamente repetido ou sem diversidade mínima é recusado pela API e pelo
+worker antes de consumir o provider. Conteúdo com palavras reconhecíveis, mas
+sem contexto semântico suficiente, pode ser recusado pelo próprio modelo usando
+`INSUFFICIENT_BRIEF`. Público e pilares podem ser listas vazias quando não
+estiverem fundamentados; o schema não obriga o modelo a preenchê-los.
+
+Structured output garante formato, não verdade factual. Em produção, a próxima
+camada seria um conjunto versionado de avaliações de grounding e utilidade,
+monitoramento da taxa de recusas e revisão periódica do prompt/modelo. RAG ou
+checagem factual independente só seria necessário se a análise dependesse de
+fontes externas, o que não faz parte deste briefing livre.
+
 ## Uso de ferramentas de IA
 
 O Codex foi usado de forma extensiva como apoio para scaffold, tarefas mecânicas, CRUD inicial, configuração de MongoDB/BullMQ, testes, Dockerfiles e reorganização dos workspaces.
@@ -357,7 +399,8 @@ A interface oferece:
 - gestão de usuários para administradores;
 - lista com busca, status, período, ordenação, paginação e atualização periódica;
 - detalhe com polling para estados `PENDING` e `PROCESSING`;
-- visualização do resultado estruturado e dos erros persistidos;
+- visualização do resultado estruturado, erros persistidos e briefings
+  considerados insuficientes;
 - retry manual para falhas recuperáveis;
 - execução local pelo Vite ou conteinerizada com Nginx.
 
@@ -367,6 +410,7 @@ A interface oferece:
 - não existe cancelamento de job quando um brief em processamento é alterado ou excluído;
 - o worker ainda não possui healthcheck próprio.
 - disponibilidade e rate limit do modelo gratuito do OpenRouter são externos à aplicação;
+- não existe verificador factual independente para conteúdo externo ao briefing;
 - não há refresh token, recuperação de senha ou envio de convites por e-mail;
 
 O fluxo funcional de ponta a ponta e o retry manual estão implementados; os

@@ -1,4 +1,7 @@
-import type { BriefAnalysisResult } from '@ai-brief/shared';
+import {
+  BriefAnalysisOutcome,
+  type BriefAnalysisResult,
+} from '@ai-brief/shared';
 import { z } from 'zod';
 
 const summary = z
@@ -45,13 +48,49 @@ const riskItem = z
     'Uma única lacuna ou risco, acompanhado de seu impacto potencial; não combine riscos diferentes no mesmo item.',
   );
 
-export const briefAnalysisSchema = z.strictObject({
+const analyzedBriefSchema = z.strictObject({
+  outcome: z
+    .literal(BriefAnalysisOutcome.ANALYZED)
+    .describe('Use apenas quando o briefing contém conteúdo compreensível.'),
   summary,
   mainObjective,
-  targetAudience: z.array(audienceItem).min(1).max(6),
-  communicationPillars: z.array(pillarItem).min(1).max(6),
-  suggestedActions: z.array(actionItem).min(4).max(8),
-  risks: z.array(riskItem).min(3).max(8),
-}) satisfies z.ZodType<BriefAnalysisResult>;
+  targetAudience: z
+    .array(audienceItem)
+    .max(6)
+    .describe('Use uma lista vazia quando o público não estiver sustentado.'),
+  communicationPillars: z
+    .array(pillarItem)
+    .max(6)
+    .describe('Use uma lista vazia quando nenhum pilar estiver sustentado.'),
+  suggestedActions: z.array(actionItem).min(1).max(8),
+  risks: z.array(riskItem).min(1).max(8),
+});
 
-export const briefAnalysisJsonSchema = z.toJSONSchema(briefAnalysisSchema);
+const insufficientBriefSchema = z.strictObject({
+  outcome: z.literal(BriefAnalysisOutcome.INSUFFICIENT_BRIEF),
+  reason: z
+    .string()
+    .min(30)
+    .max(600)
+    .describe(
+      'Explique objetivamente por que o conteúdo não permite uma análise fundamentada.',
+    ),
+  missingInformation: z
+    .array(z.string().min(5).max(280))
+    .min(1)
+    .max(8)
+    .describe('Informações que tornariam o briefing analisável.'),
+});
+
+export const briefAnalysisSchema = z.discriminatedUnion('outcome', [
+  analyzedBriefSchema,
+  insufficientBriefSchema,
+]) satisfies z.ZodType<BriefAnalysisResult>;
+
+export const briefAnalysisEnvelopeSchema = z.strictObject({
+  result: briefAnalysisSchema,
+});
+
+export const briefAnalysisJsonSchema = z.toJSONSchema(
+  briefAnalysisEnvelopeSchema,
+);

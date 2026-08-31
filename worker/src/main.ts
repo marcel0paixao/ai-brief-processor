@@ -38,20 +38,57 @@ async function bootstrap(): Promise<void> {
     },
   );
 
+  worker.on('active', (job) => {
+    const maxAttempts = configuredAttempts(job.opts.attempts);
+
+    console.info('Brief job started', {
+      jobId: job.id,
+      briefId: job.data.briefId,
+      tenantId: job.data.tenantId,
+      currentAttempt: job.attemptsMade + 1,
+      maxAttempts,
+      status: 'PROCESSING',
+    });
+  });
+
   worker.on('completed', (job) => {
     console.info('Brief job completed', {
       jobId: job.id,
       briefId: job.data.briefId,
+      tenantId: job.data.tenantId,
       attemptsStarted: job.attemptsStarted,
+      durationMs:
+        job.processedOn && job.finishedOn
+          ? job.finishedOn - job.processedOn
+          : undefined,
+      status: 'COMPLETED',
     });
   });
 
   worker.on('failed', (job, error) => {
+    const maxAttempts = configuredAttempts(job?.opts.attempts);
+    const currentAttempt = job?.attemptsMade ?? 0;
+    const willRetry =
+      Boolean(job) &&
+      error.name !== 'UnrecoverableError' &&
+      currentAttempt < maxAttempts;
+
     console.error('Brief job attempt failed', {
       jobId: job?.id,
       briefId: job?.data.briefId,
-      attemptsMade: job?.attemptsMade,
+      tenantId: job?.data.tenantId,
+      currentAttempt,
+      maxAttempts,
+      willRetry,
+      status: willRetry ? 'PENDING' : 'FAILED',
       ...errorLogFields(error),
+    });
+  });
+
+  worker.on('stalled', (jobId, previousState) => {
+    console.warn('Brief job stalled', {
+      jobId,
+      previousState,
     });
   });
 
@@ -66,6 +103,10 @@ async function bootstrap(): Promise<void> {
     queue: BRIEF_ANALYSIS_QUEUE,
     concurrency: config.concurrency,
   });
+}
+
+function configuredAttempts(attempts: number | undefined): number {
+  return typeof attempts === 'number' && attempts > 0 ? attempts : 1;
 }
 
 process.once('SIGINT', () => {

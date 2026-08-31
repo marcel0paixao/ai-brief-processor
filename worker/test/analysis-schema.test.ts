@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { BriefAnalysisOutcome } from '@ai-brief/shared';
 import { briefAnalysisSchema } from '../src/llm/analysis-schema';
 
 const deepAnalysis = {
+  outcome: BriefAnalysisOutcome.ANALYZED,
   summary:
     'O briefing apresenta o lançamento de um veículo elétrico para jovens adultos, apoiado por sustentabilidade, tecnologia e mobilidade urbana. A análise deve transformar esses pilares em uma proposta coerente, mantendo decisões de execução condicionadas aos dados ainda não informados.',
   mainObjective:
@@ -39,21 +41,19 @@ test('rejeita resumo superficial', () => {
   assert.equal(result.success, false);
 });
 
-test('exige pelo menos quatro ações concretas', () => {
+test('exige pelo menos uma ação concreta', () => {
   const result = briefAnalysisSchema.safeParse({
     ...deepAnalysis,
-    suggestedActions: deepAnalysis.suggestedActions.slice(0, 3),
+    suggestedActions: [],
   });
 
   assert.equal(result.success, false);
 });
 
-test('exige riscos separados em pelo menos três itens', () => {
+test('exige pelo menos um risco fundamentado', () => {
   const result = briefAnalysisSchema.safeParse({
     ...deepAnalysis,
-    risks: [
-      'Orçamento, canais e métricas ainda não foram definidos para orientar a execução e a avaliação da campanha.',
-    ],
+    risks: [],
   });
 
   assert.equal(result.success, false);
@@ -63,6 +63,32 @@ test('continua rejeitando campos adicionais', () => {
   const result = briefAnalysisSchema.safeParse({
     ...deepAnalysis,
     inventedInsight: 'Campo fora do contrato.',
+  });
+
+  assert.equal(result.success, false);
+});
+
+test('aceita resposta de briefing insuficiente sem inventar análise', () => {
+  const result = briefAnalysisSchema.safeParse({
+    outcome: BriefAnalysisOutcome.INSUFFICIENT_BRIEF,
+    reason:
+      'O conteúdo fornecido é composto por caracteres aleatórios e não permite identificar um contexto analisável.',
+    missingInformation: [
+      'Descrição compreensível da iniciativa ou problema',
+      'Objetivo esperado para a análise',
+    ],
+  });
+
+  assert.equal(result.success, true);
+});
+
+test('rejeita resposta insuficiente misturada com pilares inventados', () => {
+  const result = briefAnalysisSchema.safeParse({
+    outcome: BriefAnalysisOutcome.INSUFFICIENT_BRIEF,
+    reason:
+      'O conteúdo fornecido é composto por caracteres aleatórios e não permite identificar um contexto analisável.',
+    missingInformation: ['Descrição compreensível da iniciativa'],
+    communicationPillars: ['Clareza — manter uma mensagem consistente.'],
   });
 
   assert.equal(result.success, false);

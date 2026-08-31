@@ -1,6 +1,8 @@
+import { BriefAnalysisOutcome } from '@ai-brief/shared';
 import { briefAnalysisSchema } from './analysis-schema';
 
 const valid = {
+  outcome: BriefAnalysisOutcome.ANALYZED,
   summary:
     'O briefing propõe o lançamento de uma solução para pequenas empresas que precisam simplificar sua rotina operacional. A comunicação deve demonstrar valor prático e confiança, mantendo as decisões de canal condicionadas às informações ainda ausentes.',
   mainObjective:

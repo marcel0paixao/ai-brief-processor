@@ -1,6 +1,8 @@
+import { BriefAnalysisOutcome } from '@ai-brief/shared';
 import { BriefStatus } from '../schemas/brief.schema';
 
-export class BriefAnalysisResultDto {
+export class AnalyzedBriefResultDto {
+  outcome!: BriefAnalysisOutcome.ANALYZED;
   summary!: string;
   mainObjective!: string;
   targetAudience!: string[];
@@ -8,6 +10,15 @@ export class BriefAnalysisResultDto {
   suggestedActions!: string[];
   risks!: string[];
 }
+
+export class InsufficientBriefResultDto {
+  outcome!: BriefAnalysisOutcome.INSUFFICIENT_BRIEF;
+  reason!: string;
+  missingInformation!: string[];
+}
+
+export type BriefAnalysisResultDto =
+  AnalyzedBriefResultDto | InsufficientBriefResultDto;
 
 export class BriefProcessingErrorDto {
   code!: string;

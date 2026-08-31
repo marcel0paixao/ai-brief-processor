@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import {
   ANALYZE_BRIEF_JOB,
   type AnalyzeBriefJobData,
+  BriefAnalysisOutcome,
   type BriefAnalysisResult,
   BriefStatus,
 } from '@ai-brief/shared';
@@ -15,6 +16,7 @@ import type { BriefRepository } from '../src/briefs/brief-repository';
 import { ProcessingError } from '../src/errors/processing-error';
 
 const analysis: BriefAnalysisResult = {
+  outcome: BriefAnalysisOutcome.ANALYZED,
   summary: 'Resumo',
   mainObjective: 'Objetivo',
   targetAudience: ['Público'],

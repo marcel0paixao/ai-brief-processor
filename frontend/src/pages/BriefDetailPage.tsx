@@ -4,8 +4,9 @@ import {
   getBrief,
   retryBrief,
   updateBrief,
-  type BriefAnalysisResult,
+  type AnalyzedBriefResult,
   type BriefDetail,
+  type InsufficientBriefResult,
 } from '../api'
 import { StatusBadge } from '../components/StatusBadge'
 import { formatDate } from '../format'
@@ -19,6 +20,10 @@ interface BriefDetailPageProps {
 }
 
 function ResultList({ items }: { items: string[] }) {
+  if (items.length === 0) {
+    return <p className="result-empty">Não informado no briefing.</p>
+  }
+
   return (
     <ul className="result-list">
       {items.map((item, index) => <li key={`${index}-${item}`}>{item}</li>)}
@@ -26,7 +31,7 @@ function ResultList({ items }: { items: string[] }) {
   )
 }
 
-function AnalysisResult({ result }: { result: BriefAnalysisResult }) {
+function AnalysisResult({ result }: { result: AnalyzedBriefResult }) {
   return (
     <div className="result-grid">
       <article className="result-card result-wide result-summary">
@@ -54,6 +59,36 @@ function AnalysisResult({ result }: { result: BriefAnalysisResult }) {
         <ResultList items={result.risks} />
       </article>
     </div>
+  )
+}
+
+function InsufficientResult({
+  result,
+  canEdit,
+  onEdit,
+}: {
+  result: InsufficientBriefResult
+  canEdit: boolean
+  onEdit: () => void
+}) {
+  return (
+    <section className="insufficient-panel">
+      <div className="insufficient-icon" aria-hidden="true">?</div>
+      <div>
+        <span className="eyebrow">Análise responsável</span>
+        <h2>O briefing precisa de mais contexto</h2>
+        <p>{result.reason}</p>
+        <h3>Inclua estas informações</h3>
+        <ResultList items={result.missingInformation} />
+        {canEdit && (
+          <div className="insufficient-actions">
+            <button className="button button-primary" type="button" onClick={onEdit}>
+              Complementar briefing
+            </button>
+          </div>
+        )}
+      </div>
+    </section>
   )
 }
 
@@ -133,12 +168,16 @@ export function BriefDetailPage({ briefId, isAdmin, onBack, onDeleted }: BriefDe
 
     setSaving(true)
     setError(undefined)
+    const shouldReprocess = brief.result?.outcome === 'INSUFFICIENT_BRIEF'
 
     try {
-      setBrief(await updateBrief(brief.id, {
+      const updatedBrief = await updateBrief(brief.id, {
         title: editTitle.trim(),
         brief: editBrief.trim(),
-      }))
+      })
+      setBrief(
+        shouldReprocess ? await retryBrief(brief.id) : updatedBrief,
+      )
       setEditing(false)
     } catch (requestError) {
       setError(
@@ -146,6 +185,7 @@ export function BriefDetailPage({ briefId, isAdmin, onBack, onDeleted }: BriefDe
           ? requestError.message
           : 'Não foi possível salvar as alterações.',
       )
+      if (shouldReprocess) void loadBrief(true)
     } finally {
       setSaving(false)
     }
@@ -270,7 +310,15 @@ export function BriefDetailPage({ briefId, isAdmin, onBack, onDeleted }: BriefDe
                 <span className="eyebrow">Análise estruturada</span>
                 <h2>Resultado</h2>
               </div>
-              <AnalysisResult result={brief.result} />
+              {brief.result.outcome === 'INSUFFICIENT_BRIEF' ? (
+                <InsufficientResult
+                  result={brief.result}
+                  canEdit={isAdmin}
+                  onEdit={startEditing}
+                />
+              ) : (
+                <AnalysisResult result={brief.result} />
+              )}
             </section>
           ) : brief.status === 'FAILED' ? (
             <section className="failed-panel">

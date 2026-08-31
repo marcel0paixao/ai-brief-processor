@@ -2,7 +2,7 @@ import {
   BadRequestException,
   ServiceUnavailableException,
 } from '@nestjs/common';
-import { UserRole } from '@ai-brief/shared';
+import { BriefAnalysisOutcome, UserRole } from '@ai-brief/shared';
 import { Model, Types } from 'mongoose';
 import { BriefsQueueService } from './queue/briefs-queue.service';
 import { BriefsService } from './briefs.service';
@@ -125,6 +125,50 @@ describe('BriefsService retry', () => {
     ).rejects.toBeInstanceOf(BadRequestException);
     expect(findOneAndUpdate).not.toHaveBeenCalled();
     expect(retryAnalysis).not.toHaveBeenCalled();
+  });
+
+  it('reprocesses a completed insufficient brief after it is complemented', async () => {
+    const insufficientBrief = {
+      ...failedBrief,
+      status: BriefStatus.COMPLETED,
+      error: undefined,
+      result: {
+        outcome: BriefAnalysisOutcome.INSUFFICIENT_BRIEF,
+        reason: 'O briefing precisa de mais contexto para ser analisado.',
+        missingInformation: ['Objetivo esperado para a análise'],
+      },
+      completedAt: new Date('2026-08-31T10:02:00.000Z'),
+    };
+    const pendingBrief = {
+      ...insufficientBrief,
+      status: BriefStatus.PENDING,
+      result: undefined,
+      processingStartedAt: undefined,
+      completedAt: undefined,
+    };
+    findExec.mockResolvedValue(insufficientBrief);
+    findOneAndUpdateExec.mockResolvedValue(pendingBrief);
+    retryAnalysis.mockResolvedValue(undefined);
+
+    await expect(
+      service.retry(briefId.toString(), currentUser),
+    ).resolves.toMatchObject({
+      id: briefId.toString(),
+      status: BriefStatus.PENDING,
+      result: undefined,
+    });
+
+    const [filter] = findOneAndUpdate.mock.calls[0];
+    expect(filter).toEqual({
+      _id: briefId,
+      tenantId,
+      status: BriefStatus.COMPLETED,
+      'result.outcome': BriefAnalysisOutcome.INSUFFICIENT_BRIEF,
+    });
+    expect(retryAnalysis).toHaveBeenCalledWith(
+      briefId.toString(),
+      tenantId.toString(),
+    );
   });
 
   it('returns the brief to failed if republishing is unavailable', async () => {
