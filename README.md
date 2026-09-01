@@ -22,6 +22,8 @@ Já estão disponíveis:
 - frontend, backend e worker como serviços Docker separados;
 - consumidor BullMQ com OpenRouter, timeout, validação de schema, retries e
   persistência de erros classificados;
+- logs JSON, rate limit, métricas Prometheus e healthchecks da API e do worker;
+- reconciliação de briefs pendentes e fila separada para falhas definitivas;
 - testes unitários e end-to-end do backend e testes unitários do worker.
 
 ## Arquitetura atual
@@ -38,6 +40,7 @@ NestJS API ----> MongoDB
 Redis/BullMQ ----> Node.js Worker
                          |
                          +----> OpenRouter / LLM
+                         +----> DLQ de falhas definitivas
                          |
                          +----> Redis Pub/Sub ----> NestJS WebSocket
                                                        |
@@ -67,7 +70,7 @@ frontend/            aplicação React + Vite, autenticação e imagem Nginx
 backend/             API HTTP NestJS, JWT, RBAC e escopo multi-tenant
 worker/              consumidor BullMQ, integração LLM e persistência de estado
 shared/              contratos de domínio e da fila
-docker-compose.yml   MongoDB, Redis, backend e worker
+docker-compose.yml   frontend, backend, worker, MongoDB e Redis
 ```
 
 O pacote `shared` não possui dependências de NestJS, Mongoose ou BullMQ. Ele contém apenas nomes da fila/job, payload do job, estados e formatos compartilhados.
@@ -108,6 +111,9 @@ npm run docker:logs
 
 - Frontend: <http://localhost:5173>
 - API: <http://localhost:3000>
+- Health da API: <http://localhost:3000/health>
+- Métricas da API: <http://localhost:3000/metrics>
+- Health e métricas do worker: <http://localhost:3001/health> e <http://localhost:3001/metrics>
 
 No container, o Nginx do frontend encaminha `/api` para o backend. Assim, o
 navegador acessa a interface e a API pela mesma origem.
@@ -165,7 +171,8 @@ npm run infra:down
 
 ## Variáveis de ambiente
 
-`npm run env:setup` cria e preserva arquivos separados por responsabilidade:
+`npm run env:setup` cria arquivos separados por responsabilidade, preserva os
+valores existentes e acrescenta chaves novas que estejam ausentes:
 
 - `.env`: valores gerais usados pelo Docker Compose;
 - `backend/.env`: autenticação e conexões do backend no modo de desenvolvimento;
@@ -198,6 +205,7 @@ OPENROUTER_MODEL=openrouter/free
 OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
 LLM_TIMEOUT_MS=30000
 WORKER_CONCURRENCY=2
+WORKER_OPERATIONS_PORT=3001
 ```
 
 Dentro do Compose, os hosts são os nomes dos serviços:
@@ -242,6 +250,8 @@ informado diretamente.
 POST   /auth/register       cria tenant + primeiro ADMIN
 POST   /auth/login          autentica por e-mail e senha
 GET    /auth/me             retorna a sessão atual
+GET    /health              saúde da API e conexão MongoDB
+GET    /metrics             métricas Prometheus da API
 GET    /users               lista usuários do tenant (ADMIN)
 POST   /users               cria usuário no tenant (ADMIN)
 PATCH  /users/:id           altera papel/estado/nome (ADMIN)
@@ -289,7 +299,7 @@ persistidos com `retryable: true`.
 ```bash
 npm run build          # build de shared, backend, worker e frontend
 npm run lint           # valida os quatro workspaces
-npm test               # testes unitários do backend
+npm test               # testes unitários do backend e do worker
 npm run test:e2e       # testes HTTP com MongoDB e Redis ativos
 npm run env:setup      # cria .envs e gera JWT_SECRET sem sobrescrever valores
 
@@ -320,7 +330,10 @@ O custo é manter mais um workspace e decidir conscientemente quais contratos pe
 
 A API grava o brief no MongoDB antes de publicar seu ID no Redis. Assim o worker sempre recebe uma referência a um registro existente.
 
-MongoDB e Redis não participam da mesma transação. Uma queda da API entre as duas operações pode deixar um brief `PENDING` sem job. Uma solução futura pode usar reconciliação ou Transactional Outbox; isso não está implementado.
+MongoDB e Redis não participam da mesma transação. Uma reconciliação simples
+republica briefs `PENDING` antigos que não possuam job ativo. A janela entre as
+operações continua existindo; uma solução de produção poderia usar
+Transactional Outbox.
 
 ### Sessão e isolamento multi-tenant
 
@@ -338,18 +351,49 @@ cliente são rejeitados pela validação global da API.
 Docker Compose oferece uma execução reproduzível de frontend, API, worker,
 MongoDB e Redis. O frontend também pode rodar pelo Vite durante o desenvolvimento.
 
+O serviço do worker carrega `worker/.env` pelo `env_file` do Compose. Assim,
+`WORKER_CONCURRENCY` e as configurações do provider chegam ao container sem
+serem repetidas no `.env` geral; a concorrência padrão é `2`.
+
 ## Worker
 
 O worker consome a fila BullMQ, aplica transições atômicas por brief e tenant,
 chama o OpenRouter com timeout, valida o envelope e o resultado com Zod e
-persiste erros estáveis. Erros temporários usam as três tentativas da fila;
-erros de autenticação ou requisição são encerrados sem chamadas adicionais.
+persiste erros estáveis. O timeout padrão é de 30 segundos. Erros temporários
+usam três tentativas com backoff exponencial iniciado em 2 segundos; erros de
+autenticação ou requisição inválida são encerrados sem chamadas adicionais.
 Registros `COMPLETED` são terminais, e atualizações tardias não conseguem
 substituir o resultado persistido.
 
+Falhas definitivas também são copiadas para `brief-analysis-dlq`. A fila não
+possui consumidor automático: ela serve para inspeção e reprocessamento
+deliberado. Briefs em `PROCESSING` não podem ser editados ou excluídos, evitando
+que um resultado antigo seja aplicado sobre conteúdo alterado.
+
+### Provider e modelo
+
+O OpenRouter foi escolhido porque oferece uma única API compatível com vários
+modelos, exige pouca configuração local e permite usar uma opção gratuita no
+desafio. O padrão `openrouter/free` evita custo durante a demonstração, mas não
+fixa qualidade nem latência: disponibilidade, fila e modelo efetivamente
+roteado podem variar. `require_parameters` restringe o roteamento a providers
+compatíveis com structured output.
+
+O modelo permanece configurável por `OPENROUTER_MODEL`. Em produção, a escolha
+seria fixada depois de comparar os casos de `worker/evals` por qualidade,
+latência e custo, em vez de depender do roteador gratuito.
+
+Timeouts, HTTP 408/429, falhas de rede, respostas 5xx e saídas inválidas são
+recuperáveis. Erros de autenticação e requisições incompatíveis não são
+repetidos. O BullMQ mantém o job no Redis; em encerramento gracioso o worker
+para de aceitar novos jobs e aguarda o ativo, enquanto uma interrupção abrupta
+pode gerar um job `stalled`, retomado posteriormente. As transições atômicas e
+o estado terminal `COMPLETED` impedem que uma execução tardia corrompa o
+resultado.
+
 ### Observabilidade
 
-Cada job usa o próprio `briefId` como `jobId`, o que permite correlacionar API,
+Os logs são emitidos como JSON. Cada job usa o próprio `briefId` como `jobId`, o que permite correlacionar API,
 BullMQ, MongoDB e interface sem um identificador paralelo. A API registra a
 publicação e a republicação na fila; o worker registra início, conclusão,
 falha de tentativa e job stalled com `jobId`, `briefId`, `tenantId`, tentativa,
@@ -360,9 +404,11 @@ No produto, o detalhe exibe status, quantidade de tentativas e o erro persistido
 (`code`, `message` e `retryable`). Assim, o mesmo erro fica identificável tanto
 para o usuário quanto para quem opera a stack com `npm run docker:logs`.
 
-Para produção, os próximos passos seriam emitir JSON em linha para um coletor,
-adicionar métricas de duração/taxa de falha por código e tracing distribuído.
-Esses itens são conscientemente deixados fora do escopo local do desafio.
+A API limita requisições globalmente e aplica limites menores em login,
+cadastro e criação de análises. `/metrics` expõe duração e volume HTTP; o worker
+expõe volume, duração, falhas por código e jobs stalled. Tracing distribuído e
+cache de aplicação foram deixados de fora porque não resolvem um gargalo
+observado neste escopo.
 
 ### Prompt, grounding e briefings insuficientes
 
@@ -383,8 +429,10 @@ sem contexto semântico suficiente, pode ser recusado pelo próprio modelo usand
 `INSUFFICIENT_BRIEF`. Público e pilares podem ser listas vazias quando não
 estiverem fundamentados; o schema não obriga o modelo a preenchê-los.
 
-Structured output garante formato, não verdade factual. Em produção, a próxima
-camada seria um conjunto versionado de avaliações de grounding e utilidade,
+Structured output garante formato, não verdade factual. `worker/evals` mantém
+um conjunto pequeno de casos de grounding e entradas adversariais. O gate local
+é testado automaticamente; a expectativa do provider é revisada manualmente
+para não consumir a cota gratuita em toda execução. Em produção ainda caberiam
 monitoramento da taxa de recusas e revisão periódica do prompt/modelo. RAG ou
 checagem factual independente só seria necessário se a análise dependesse de
 fontes externas, o que não faz parte deste briefing livre.
@@ -413,9 +461,9 @@ A interface oferece:
 
 ## Limitações conhecidas
 
-- não existe reconciliação para briefs sem job;
-- não existe cancelamento de job quando um brief em processamento é alterado ou excluído;
-- o worker ainda não possui healthcheck próprio.
+- a reconciliação é periódica e limitada a 100 briefs por ciclo, não um outbox transacional;
+- a DLQ é mantida para inspeção manual e não possui consumidor automático;
+- não há tracing distribuído nem cache de aplicação;
 - disponibilidade e rate limit do modelo gratuito do OpenRouter são externos à aplicação;
 - não existe verificador factual independente para conteúdo externo ao briefing;
 - não há refresh token, recuperação de senha ou envio de convites por e-mail;

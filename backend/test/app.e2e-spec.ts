@@ -13,6 +13,7 @@ import mongoose, { Connection, Types } from 'mongoose';
 import request from 'supertest';
 import { App } from 'supertest/types';
 import { AppModule } from './../src/app.module';
+import { BriefReconciliationService } from './../src/briefs/brief-reconciliation.service';
 import {
   ANALYZE_BRIEF_JOB,
   AnalyzeBriefJobData,
@@ -84,6 +85,7 @@ describe('App (e2e)', () => {
   let app: INestApplication<App>;
   let connection: Connection;
   let briefQueue: Queue<AnalyzeBriefJobData>;
+  let reconciliation: BriefReconciliationService;
 
   async function registerTenant(label = 'primary'): Promise<AuthResponseBody> {
     const response = await request(app.getHttpServer())
@@ -131,6 +133,7 @@ describe('App (e2e)', () => {
     briefQueue = moduleFixture.get<Queue<AnalyzeBriefJobData>>(
       getQueueToken(BRIEF_ANALYSIS_QUEUE),
     );
+    reconciliation = moduleFixture.get(BriefReconciliationService);
     await app.init();
     await briefQueue.waitUntilReady();
     await mongoose.connect(process.env.MONGODB_URI);
@@ -292,6 +295,32 @@ describe('App (e2e)', () => {
       await integrationWorker.close();
       await workerRedis.quit();
     }
+  });
+
+  it('reconciles a stale PENDING brief whose Redis job was lost', async () => {
+    const auth = await registerTenant('reconciliation');
+    const created = await createBrief(auth.accessToken);
+
+    await briefQueue.remove(created.id);
+    await connection
+      .collection('briefs')
+      .updateOne(
+        { _id: new Types.ObjectId(created.id) },
+        { $set: { updatedAt: new Date(Date.now() - 60_000) } },
+      );
+    expect(await briefQueue.getJob(created.id)).toBeUndefined();
+
+    await expect(reconciliation.reconcile()).resolves.toBe(1);
+
+    const restoredJob = await briefQueue.getJob(created.id);
+    expect(restoredJob).toMatchObject({
+      id: created.id,
+      name: ANALYZE_BRIEF_JOB,
+      data: {
+        briefId: created.id,
+        tenantId: auth.user.tenant.id,
+      },
+    });
   });
 
   it('does not claim or update a brief through another tenant', async () => {

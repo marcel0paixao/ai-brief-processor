@@ -11,6 +11,7 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import type { AuthenticatedUser } from '../auth/authenticated-user';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -31,6 +32,7 @@ export class BriefsController {
 
   @Post()
   @HttpCode(HttpStatus.ACCEPTED)
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
   create(
     @Body() createBriefDto: CreateBriefDto,
     @CurrentUser() currentUser: AuthenticatedUser,

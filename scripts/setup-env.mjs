@@ -31,16 +31,46 @@ function setValue(content, key, value) {
   return `${lines.join('\n').replace(/\n+$/, '')}\n`
 }
 
+function addMissingTemplateValues(content, templateContent) {
+  let nextContent = content
+
+  for (const line of templateContent.split(/\r?\n/)) {
+    const match = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/.exec(line)
+    if (!match) continue
+
+    const [, key, value] = match
+    if (getValue(nextContent, key) === undefined) {
+      nextContent = setValue(nextContent, key, value)
+    }
+  }
+
+  return nextContent
+}
+
 function ensureFile(targetPath, templatePath) {
   const absoluteTarget = resolve(projectRoot, targetPath)
 
   if (existsSync(absoluteTarget)) {
-    return { content: read(targetPath), created: false }
+    const content = read(targetPath)
+    const nextContent = addMissingTemplateValues(content, read(templatePath))
+
+    if (nextContent !== content) {
+      writeFileSync(absoluteTarget, nextContent, {
+        encoding: 'utf8',
+        mode: 0o600,
+      })
+    }
+
+    return {
+      content: nextContent,
+      created: false,
+      updated: nextContent !== content,
+    }
   }
 
   const content = read(templatePath)
   writeFileSync(absoluteTarget, content, { encoding: 'utf8', mode: 0o600 })
-  return { content, created: true }
+  return { content, created: true, updated: false }
 }
 
 function ensureSecret(targetPath, templatePath, preferredSecret) {
@@ -58,7 +88,12 @@ function ensureSecret(targetPath, templatePath, preferredSecret) {
     })
   }
 
-  return { secret, created: file.created, changed: nextContent !== file.content }
+  return {
+    secret,
+    created: file.created,
+    updated: file.updated,
+    changed: nextContent !== file.content,
+  }
 }
 
 const rootEnvironment = ensureSecret('.env', '.env.example', generatedSecret)
@@ -76,7 +111,11 @@ for (const [path, result] of [
   ['worker/.env', workerEnvironment],
   ['frontend/.env', frontendEnvironment],
 ]) {
-  const state = result.created ? 'created' : 'preserved'
+  const state = result.created
+    ? 'created'
+    : result.updated || result.changed
+      ? 'updated'
+      : 'preserved'
   process.stdout.write(`${path}: ${state}\n`)
 }
 

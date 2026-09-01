@@ -27,4 +27,5 @@ export const config = {
         process.env.OPENROUTER_BASE_URL ?? 'https://openrouter.ai/api/v1',
     llmTimeoutMs: positiveInteger('LLM_TIMEOUT_MS', 30_000),
     concurrency: positiveInteger('WORKER_CONCURRENCY', 2),
+    operationsPort: positiveInteger('WORKER_OPERATIONS_PORT', 3001),
 } as const;
