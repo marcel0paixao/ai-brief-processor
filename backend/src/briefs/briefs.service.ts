@@ -1,6 +1,7 @@
 import { BriefAnalysisOutcome } from '@ai-brief/shared';
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   Logger,
   NotFoundException,
@@ -234,7 +235,7 @@ export class BriefsService {
   }
 
   private logQueueFailure(
-    operation: 'enqueue' | 'retry',
+    operation: 'enqueue' | 'retry' | 'remove',
     briefId: string,
     tenantId: string,
     error: unknown,
@@ -326,13 +327,28 @@ export class BriefsService {
 
     const updatedBrief = await this.briefModel
       .findOneAndUpdate(
-        { _id: id, tenantId: new Types.ObjectId(currentUser.tenantId) },
+        {
+          _id: id,
+          tenantId: new Types.ObjectId(currentUser.tenantId),
+          status: { $ne: BriefStatus.PROCESSING },
+        },
         { $set: changes },
         { returnDocument: 'after', runValidators: true },
       )
       .exec();
 
-    if (!updatedBrief) throw new NotFoundException('Brief not found');
+    if (!updatedBrief) {
+      const existing = await this.briefModel.exists({
+        _id: id,
+        tenantId: new Types.ObjectId(currentUser.tenantId),
+      });
+      if (existing) {
+        throw new ConflictException(
+          'A brief cannot be edited while it is being processed',
+        );
+      }
+      throw new NotFoundException('Brief not found');
+    }
 
     return toDetail(updatedBrief);
   }
@@ -342,10 +358,28 @@ export class BriefsService {
       .findOneAndDelete({
         _id: id,
         tenantId: new Types.ObjectId(currentUser.tenantId),
+        status: { $ne: BriefStatus.PROCESSING },
       })
       .exec();
 
-    if (!deletedBrief) throw new NotFoundException('Brief not found');
+    if (!deletedBrief) {
+      const existing = await this.briefModel.exists({
+        _id: id,
+        tenantId: new Types.ObjectId(currentUser.tenantId),
+      });
+      if (existing) {
+        throw new ConflictException(
+          'A brief cannot be deleted while it is being processed',
+        );
+      }
+      throw new NotFoundException('Brief not found');
+    }
+
+    try {
+      await this.briefsQueueService.removeAnalysis(id);
+    } catch (error) {
+      this.logQueueFailure('remove', id, currentUser.tenantId, error);
+    }
   }
 
   private createBaseFilter(

@@ -6,6 +6,7 @@ import {
   HttpStatus,
   Post,
 } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { AuthService } from './auth.service';
 import type { AuthenticatedUser } from './authenticated-user';
 import { CurrentUser } from './decorators/current-user.decorator';
@@ -20,12 +21,14 @@ export class AuthController {
 
   @Public()
   @Post('register')
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
   register(@Body() registerDto: RegisterDto): Promise<AuthResponseDto> {
     return this.authService.register(registerDto);
   }
 
   @Public()
   @Post('login')
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
   @HttpCode(HttpStatus.OK)
   login(@Body() loginDto: LoginDto): Promise<AuthResponseDto> {
     return this.authService.login(loginDto);

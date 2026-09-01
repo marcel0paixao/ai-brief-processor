@@ -37,4 +37,21 @@ export class BriefsQueueService {
     );
     await this.enqueueAnalysis(briefId, tenantId);
   }
+
+  async ensureAnalysis(briefId: string, tenantId: string): Promise<boolean> {
+    const existingJob = await this.queue.getJob(briefId);
+
+    if (existingJob) {
+      const state = await existingJob.getState();
+      if (state !== 'completed' && state !== 'failed') return false;
+      await existingJob.remove();
+    }
+
+    await this.enqueueAnalysis(briefId, tenantId);
+    return true;
+  }
+
+  async removeAnalysis(briefId: string): Promise<void> {
+    await this.queue.remove(briefId);
+  }
 }

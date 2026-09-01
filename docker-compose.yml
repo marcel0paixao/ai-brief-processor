@@ -44,6 +44,7 @@ services:
       FRONTEND_URL: ${FRONTEND_URL:-http://localhost:5173}
       JWT_SECRET: ${JWT_SECRET:-}
       JWT_EXPIRES_IN_SECONDS: ${JWT_EXPIRES_IN_SECONDS:-28800}
+      BRIEF_RECONCILIATION_INTERVAL_MS: ${BRIEF_RECONCILIATION_INTERVAL_MS:-60000}
     depends_on:
       mongodb:
         condition: service_healthy
@@ -52,7 +53,7 @@ services:
     ports:
       - "3000:3000"
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--spider", "http://127.0.0.1:3000/"]
+      test: ["CMD", "wget", "--quiet", "--spider", "http://127.0.0.1:3000/health"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -72,6 +73,14 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    ports:
+      - "3001:3001"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
   frontend:
     build:

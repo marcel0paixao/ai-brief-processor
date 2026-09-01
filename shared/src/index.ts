@@ -1,11 +1,20 @@
 export const BRIEF_ANALYSIS_QUEUE = 'brief-analysis';
 export const ANALYZE_BRIEF_JOB = 'analyze-brief';
+export const BRIEF_ANALYSIS_DLQ = 'brief-analysis-dlq';
+export const BRIEF_ANALYSIS_FAILED_JOB = 'brief-analysis-failed';
 export const BRIEF_EVENTS_CHANNEL = 'brief-events';
 export const BRIEF_UPDATED_EVENT = 'brief.updated';
 
 export interface AnalyzeBriefJobData {
   briefId: string;
   tenantId: string;
+}
+
+export interface FailedBriefJobData extends AnalyzeBriefJobData {
+  originalJobId: string;
+  errorCode: string;
+  errorMessage: string;
+  failedAt: string;
 }
 
 export enum UserRole {

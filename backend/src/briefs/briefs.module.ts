@@ -1,6 +1,8 @@
 import { BullModule } from '@nestjs/bullmq';
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
+import { ObservabilityModule } from '../observability/observability.module';
+import { BriefReconciliationService } from './brief-reconciliation.service';
 import { BriefsController } from './briefs.controller';
 import { BriefsService } from './briefs.service';
 import {
@@ -17,8 +19,9 @@ import { Brief, BriefSchema } from './schemas/brief.schema';
       name: BRIEF_ANALYSIS_QUEUE,
       configKey: BRIEF_QUEUE_CONFIG,
     }),
+    ObservabilityModule,
   ],
   controllers: [BriefsController],
-  providers: [BriefsService, BriefsQueueService],
+  providers: [BriefsService, BriefsQueueService, BriefReconciliationService],
 })
 export class BriefsModule {}

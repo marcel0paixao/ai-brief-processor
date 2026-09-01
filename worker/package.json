@@ -13,10 +13,12 @@
   },
   "dependencies": {
     "@ai-brief/shared": "*",
+    "@prometheus-io/client": "^0.16.1",
     "bullmq": "^6.3.1",
     "dotenv": "^17.4.1",
     "ioredis": "^6.0.0",
     "mongoose": "^9.9.4",
+    "pino": "^10.3.1",
     "zod": "^4.5.4"
   },
   "devDependencies": {
