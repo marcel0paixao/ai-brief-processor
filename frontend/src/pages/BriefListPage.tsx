@@ -9,6 +9,7 @@ import {
 } from '../api'
 import { StatusBadge } from '../components/StatusBadge'
 import { formatDate } from '../format'
+import { useBriefUpdates } from '../brief-events'
 
 interface BriefListPageProps {
   onCreate: () => void
@@ -88,14 +89,22 @@ export function BriefListPage({ onCreate, onOpen }: BriefListPageProps) {
     }
   }, [appliedFilters, page])
 
+  const handleBriefUpdate = useCallback(() => {
+    void loadBriefs(true)
+  }, [loadBriefs])
+  const realtimeConnected = useBriefUpdates(handleBriefUpdate)
+
   useEffect(() => {
     const initialLoadId = window.setTimeout(() => void loadBriefs(), 0)
-    const intervalId = window.setInterval(() => void loadBriefs(true), 8_000)
-    return () => {
-      window.clearTimeout(initialLoadId)
-      window.clearInterval(intervalId)
-    }
+    return () => window.clearTimeout(initialLoadId)
   }, [loadBriefs])
+
+  useEffect(() => {
+    if (realtimeConnected) return
+
+    const intervalId = window.setInterval(() => void loadBriefs(true), 8_000)
+    return () => window.clearInterval(intervalId)
+  }, [loadBriefs, realtimeConnected])
 
   function applyFilters(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()

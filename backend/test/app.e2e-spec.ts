@@ -2,9 +2,14 @@ import { getQueueToken } from '@nestjs/bullmq';
 import { INestApplication } from '@nestjs/common';
 import { getConnectionToken } from '@nestjs/mongoose';
 import { Test, TestingModule } from '@nestjs/testing';
-import { UserRole } from '@ai-brief/shared';
-import { Queue } from 'bullmq';
-import { Connection, Types } from 'mongoose';
+import {
+  BriefAnalysisOutcome,
+  type BriefAnalysisResult,
+  UserRole,
+} from '@ai-brief/shared';
+import { Queue, Worker } from 'bullmq';
+import IORedis from 'ioredis';
+import mongoose, { Connection, Types } from 'mongoose';
 import request from 'supertest';
 import { App } from 'supertest/types';
 import { AppModule } from './../src/app.module';
@@ -13,6 +18,24 @@ import {
   AnalyzeBriefJobData,
   BRIEF_ANALYSIS_QUEUE,
 } from './../src/briefs/queue/briefs-queue.constants';
+import { createBriefProcessor } from '../../worker/src/briefs/brief-processor';
+import { briefRepository } from '../../worker/src/briefs/brief-repository';
+
+const fakeAnalysis: BriefAnalysisResult = {
+  outcome: BriefAnalysisOutcome.ANALYZED,
+  summary:
+    'The briefing describes a product launch aimed at small business owners and contains enough context for a structured initial analysis.',
+  mainObjective:
+    'Introduce the new product to small business owners using only the audience and launch context explicitly provided in the briefing.',
+  targetAudience: ['Small business owners'],
+  communicationPillars: [],
+  suggestedActions: [
+    'Define the product facts and launch message before producing campaign materials.',
+  ],
+  risks: [
+    'The briefing does not provide product benefits, channels, budget or success metrics.',
+  ],
+};
 
 const validBriefPayload = {
   title: 'Product launch campaign',
@@ -54,6 +77,7 @@ interface BriefListResponseBody {
 interface BriefDetailBody extends BriefListItemBody {
   brief: string;
   attemptCount: number;
+  result?: BriefAnalysisResult;
 }
 
 describe('App (e2e)', () => {
@@ -109,6 +133,7 @@ describe('App (e2e)', () => {
     );
     await app.init();
     await briefQueue.waitUntilReady();
+    await mongoose.connect(process.env.MONGODB_URI);
   });
 
   afterEach(async () => {
@@ -122,6 +147,7 @@ describe('App (e2e)', () => {
 
   afterAll(async () => {
     await briefQueue.obliterate({ force: true });
+    await mongoose.disconnect();
     await app.close();
   });
 
@@ -204,6 +230,120 @@ describe('App (e2e)', () => {
       tenantId: auth.user.tenant.id,
     });
     expect(queuedJob?.opts.attempts).toBe(3);
+  });
+
+  it('processes POST -> BullMQ -> fake worker -> GET without a real provider', async () => {
+    const workerRedis = new IORedis({
+      host: process.env.REDIS_HOST,
+      port: Number(process.env.REDIS_PORT),
+      db: Number(process.env.REDIS_DB),
+      maxRetriesPerRequest: null,
+    });
+    let analyzerCalls = 0;
+    const integrationWorker = new Worker<AnalyzeBriefJobData>(
+      BRIEF_ANALYSIS_QUEUE,
+      createBriefProcessor({
+        repository: briefRepository,
+        analyzeBrief: () => {
+          analyzerCalls += 1;
+          return Promise.resolve(fakeAnalysis);
+        },
+      }),
+      { connection: workerRedis },
+    );
+
+    try {
+      await integrationWorker.waitUntilReady();
+      const completedJob = new Promise<string | undefined>(
+        (resolve, reject) => {
+          const timeout = setTimeout(
+            () => reject(new Error('Fake worker did not complete the job')),
+            5_000,
+          );
+
+          integrationWorker.once('completed', (job) => {
+            clearTimeout(timeout);
+            resolve(job.id);
+          });
+          integrationWorker.once('failed', (_job, error) => {
+            clearTimeout(timeout);
+            reject(error);
+          });
+        },
+      );
+
+      const auth = await registerTenant('worker-flow');
+      const created = await createBrief(auth.accessToken);
+
+      await expect(completedJob).resolves.toBe(created.id);
+      const detailResponse = await request(app.getHttpServer())
+        .get(`/briefs/${created.id}`)
+        .set('Authorization', `Bearer ${auth.accessToken}`)
+        .expect(200);
+
+      expect(detailResponse.body as BriefDetailBody).toMatchObject({
+        id: created.id,
+        status: 'COMPLETED',
+        attemptCount: 1,
+        result: fakeAnalysis,
+      });
+      expect(analyzerCalls).toBe(1);
+    } finally {
+      await integrationWorker.close();
+      await workerRedis.quit();
+    }
+  });
+
+  it('does not claim or update a brief through another tenant', async () => {
+    const auth = await registerTenant('repository-scope');
+    const created = await createBrief(auth.accessToken);
+    const otherTenantId = new Types.ObjectId().toHexString();
+
+    await expect(
+      briefRepository.startAttempt(created.id, otherTenantId),
+    ).rejects.toMatchObject({
+      code: 'BRIEF_NOT_FOUND',
+      retryable: false,
+    });
+
+    const storedBrief = await connection.collection('briefs').findOne({
+      _id: new Types.ObjectId(created.id),
+    });
+    expect(storedBrief).toMatchObject({
+      status: 'PENDING',
+      attemptCount: 0,
+      tenantId: new Types.ObjectId(auth.user.tenant.id),
+    });
+  });
+
+  it('does not replace COMPLETED with a late failure', async () => {
+    const auth = await registerTenant('late-failure');
+    const created = await createBrief(auth.accessToken);
+    const scope = {
+      _id: new Types.ObjectId(created.id),
+      tenantId: new Types.ObjectId(auth.user.tenant.id),
+    };
+    await connection.collection('briefs').updateOne(scope, {
+      $set: { status: 'PROCESSING' },
+    });
+
+    await expect(
+      briefRepository.complete(created.id, auth.user.tenant.id, fakeAnalysis),
+    ).resolves.toBe(true);
+    await expect(
+      briefRepository.fail(created.id, auth.user.tenant.id, {
+        code: 'LLM_TIMEOUT',
+        message: 'A late attempt timed out.',
+        retryable: true,
+      }),
+    ).resolves.toBe(false);
+
+    const storedBrief = await connection.collection('briefs').findOne(scope);
+    expect(storedBrief).toMatchObject({
+      status: 'COMPLETED',
+      result: fakeAnalysis,
+    });
+    expect(storedBrief).not.toHaveProperty('error');
   });
 
   it('/briefs validates input and returns filtered paginated summaries', async () => {

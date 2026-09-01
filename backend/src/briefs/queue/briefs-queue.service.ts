@@ -1,5 +1,5 @@
 import { InjectQueue } from '@nestjs/bullmq';
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { Queue } from 'bullmq';
 import {
   ANALYZE_BRIEF_JOB,
@@ -9,6 +9,8 @@ import {
 
 @Injectable()
 export class BriefsQueueService {
+  private readonly logger = new Logger(BriefsQueueService.name);
+
   constructor(
     @InjectQueue(BRIEF_ANALYSIS_QUEUE)
     private readonly queue: Queue<AnalyzeBriefJobData>,
@@ -20,5 +22,19 @@ export class BriefsQueueService {
       { briefId, tenantId },
       { jobId: briefId },
     );
+
+    this.logger.log(
+      `Brief analysis job queued jobId=${briefId} briefId=${briefId} tenantId=${tenantId}`,
+    );
+  }
+
+  async retryAnalysis(briefId: string, tenantId: string): Promise<void> {
+    // BullMQ keeps terminal jobs by default. Remove the previous job so the
+    // stable jobId can be reused without creating duplicate IDs.
+    await this.queue.remove(briefId);
+    this.logger.log(
+      `Previous brief analysis job removed for retry jobId=${briefId} briefId=${briefId} tenantId=${tenantId}`,
+    );
+    await this.enqueueAnalysis(briefId, tenantId);
   }
 }

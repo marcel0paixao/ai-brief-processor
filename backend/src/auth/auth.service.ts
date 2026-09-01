@@ -19,6 +19,10 @@ import { hashPassword, verifyPassword } from './password';
 import { Tenant, TenantDocument } from './schemas/tenant.schema';
 import { User, UserDocument, UserRole } from './schemas/user.schema';
 
+interface AccessTokenPayload {
+  sub: string;
+}
+
 @Injectable()
 export class AuthService {
   constructor(
@@ -93,6 +97,33 @@ export class AuthService {
     return this.createAuthResponse(user, tenant);
   }
 
+  async authenticateAccessToken(token: string): Promise<AuthenticatedUser> {
+    try {
+      const payload =
+        await this.jwtService.verifyAsync<AccessTokenPayload>(token);
+      const user = await this.userModel
+        .findOne({ _id: payload.sub, isActive: true })
+        .exec();
+
+      if (!user) throw this.unauthorized();
+
+      const tenant = await this.tenantModel.findById(user.tenantId).exec();
+      if (!tenant) throw this.unauthorized();
+
+      return {
+        id: user._id.toString(),
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        tenantId: tenant._id.toString(),
+        tenantName: tenant.name,
+        tenantSlug: tenant.slug,
+      };
+    } catch {
+      throw this.unauthorized();
+    }
+  }
+
   getCurrentUser(user: AuthenticatedUser): SessionUserDto {
     return {
       id: user.id,
@@ -144,5 +175,12 @@ export class AuthService {
     const suffix = randomBytes(3).toString('hex');
 
     return `${normalizedName || 'tenant'}-${suffix}`;
+  }
+
+  private unauthorized(): UnauthorizedException {
+    return new UnauthorizedException({
+      code: 'UNAUTHORIZED',
+      message: 'Authentication is required or the session has expired.',
+    });
   }
 }

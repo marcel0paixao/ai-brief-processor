@@ -32,7 +32,8 @@ export interface RegisterInput extends LoginInput {
   tenantName: string
 }
 
-export interface BriefAnalysisResult {
+export interface AnalyzedBriefResult {
+  outcome: 'ANALYZED'
   summary: string
   mainObjective: string
   targetAudience: string[]
@@ -40,6 +41,14 @@ export interface BriefAnalysisResult {
   suggestedActions: string[]
   risks: string[]
 }
+
+export interface InsufficientBriefResult {
+  outcome: 'INSUFFICIENT_BRIEF'
+  reason: string
+  missingInformation: string[]
+}
+
+export type BriefAnalysisResult = AnalyzedBriefResult | InsufficientBriefResult
 
 export interface BriefProcessingError {
   code: string
@@ -275,6 +284,12 @@ export function createBrief(input: CreateBriefInput): Promise<CreateBriefRespons
   return request<CreateBriefResponse>('/briefs', {
     method: 'POST',
     body: JSON.stringify(input),
+  })
+}
+
+export function retryBrief(briefId: string): Promise<BriefDetail> {
+  return request<BriefDetail>(`/briefs/${encodeURIComponent(briefId)}/retry`, {
+    method: 'POST',
   })
 }
 

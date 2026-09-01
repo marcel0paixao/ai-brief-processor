@@ -1,6 +1,8 @@
+import { BriefAnalysisOutcome } from '@ai-brief/shared';
 import {
   BadRequestException,
   Injectable,
+  Logger,
   NotFoundException,
   ServiceUnavailableException,
 } from '@nestjs/common';
@@ -9,7 +11,7 @@ import { Model, SortOrder as MongooseSortOrder, Types } from 'mongoose';
 import type { AuthenticatedUser } from '../auth/authenticated-user';
 import { BriefQueryDto, SortOrder } from './dto/brief-query.dto';
 import {
-  BriefAnalysisResultDto,
+  type BriefAnalysisResultDto,
   BriefDetailDto,
   BriefListItemDto,
   BriefListResponseDto,
@@ -51,13 +53,22 @@ function toListItem(brief: BriefDocument): BriefListItemDto {
 }
 
 function toAnalysisResult(result: BriefAnalysisResult): BriefAnalysisResultDto {
+  if (result.outcome === BriefAnalysisOutcome.INSUFFICIENT_BRIEF) {
+    return {
+      outcome: BriefAnalysisOutcome.INSUFFICIENT_BRIEF,
+      reason: result.reason!,
+      missingInformation: result.missingInformation!,
+    };
+  }
+
   return {
-    summary: result.summary,
-    mainObjective: result.mainObjective,
-    targetAudience: result.targetAudience,
-    communicationPillars: result.communicationPillars,
-    suggestedActions: result.suggestedActions,
-    risks: result.risks,
+    outcome: BriefAnalysisOutcome.ANALYZED,
+    summary: result.summary!,
+    mainObjective: result.mainObjective!,
+    targetAudience: result.targetAudience!,
+    communicationPillars: result.communicationPillars!,
+    suggestedActions: result.suggestedActions!,
+    risks: result.risks!,
   };
 }
 
@@ -89,6 +100,8 @@ function escapeRegExp(value: string): string {
 
 @Injectable()
 export class BriefsService {
+  private readonly logger = new Logger(BriefsService.name);
+
   constructor(
     @InjectModel(Brief.name)
     private readonly briefModel: Model<Brief>,
@@ -113,7 +126,8 @@ export class BriefsService {
         briefId,
         currentUser.tenantId,
       );
-    } catch {
+    } catch (error) {
+      this.logQueueFailure('enqueue', briefId, currentUser.tenantId, error);
       await this.briefModel
         .updateOne(
           { _id: createdBrief._id, tenantId },
@@ -134,6 +148,104 @@ export class BriefsService {
     }
 
     return { id: briefId, status: createdBrief.status };
+  }
+
+  async retry(
+    id: string,
+    currentUser: AuthenticatedUser,
+  ): Promise<BriefDetailDto> {
+    const tenantId = new Types.ObjectId(currentUser.tenantId);
+    const brief = await this.findByIdOrThrow(id, currentUser.tenantId);
+    const isRetryableFailure =
+      brief.status === BriefStatus.FAILED && brief.error?.retryable === true;
+    const isInsufficientBrief =
+      brief.status === BriefStatus.COMPLETED &&
+      brief.result?.outcome === BriefAnalysisOutcome.INSUFFICIENT_BRIEF;
+
+    if (!isRetryableFailure && !isInsufficientBrief) {
+      throw new BadRequestException(
+        'Only retryable failures or insufficient briefs can be reprocessed',
+      );
+    }
+
+    const retryableStateFilter = isRetryableFailure
+      ? {
+          status: BriefStatus.FAILED,
+          'error.retryable': true,
+        }
+      : {
+          status: BriefStatus.COMPLETED,
+          'result.outcome': BriefAnalysisOutcome.INSUFFICIENT_BRIEF,
+        };
+
+    const pendingBrief = await this.briefModel
+      .findOneAndUpdate(
+        {
+          _id: brief._id,
+          tenantId,
+          ...retryableStateFilter,
+        },
+        {
+          $set: {
+            status: BriefStatus.PENDING,
+            updatedAt: new Date(),
+          },
+          $unset: {
+            error: '',
+            result: '',
+            processingStartedAt: '',
+            completedAt: '',
+          },
+        },
+        { returnDocument: 'after' },
+      )
+      .exec();
+
+    if (!pendingBrief) {
+      throw new BadRequestException(
+        'The brief changed state and can no longer be retried',
+      );
+    }
+
+    try {
+      await this.briefsQueueService.retryAnalysis(id, currentUser.tenantId);
+    } catch (error) {
+      this.logQueueFailure('retry', id, currentUser.tenantId, error);
+      await this.briefModel
+        .updateOne(
+          { _id: brief._id, tenantId, status: BriefStatus.PENDING },
+          {
+            $set: {
+              status: BriefStatus.FAILED,
+              error: queueUnavailableError,
+            },
+          },
+        )
+        .exec();
+
+      throw new ServiceUnavailableException({
+        code: queueUnavailableError.code,
+        message: queueUnavailableError.message,
+        briefId: id,
+      });
+    }
+
+    return toDetail(pendingBrief);
+  }
+
+  private logQueueFailure(
+    operation: 'enqueue' | 'retry',
+    briefId: string,
+    tenantId: string,
+    error: unknown,
+  ): void {
+    const normalizedError =
+      error instanceof Error ? error : new Error('Unknown queue error');
+
+    this.logger.error(
+      `Brief queue operation failed operation=${operation} jobId=${briefId} briefId=${briefId} tenantId=${tenantId} errorName=${normalizedError.name} errorMessage=${normalizedError.message}`,
+      normalizedError.stack,
+    );
   }
 
   async findAll(

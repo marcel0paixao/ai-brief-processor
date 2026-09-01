@@ -2,13 +2,16 @@ import { useCallback, useEffect, useState } from 'react'
 import {
   deleteBrief,
   getBrief,
+  retryBrief,
   updateBrief,
-  type BriefAnalysisResult,
+  type AnalyzedBriefResult,
   type BriefDetail,
+  type InsufficientBriefResult,
 } from '../api'
 import { StatusBadge } from '../components/StatusBadge'
 import { formatDate } from '../format'
 import { getStatusLabel } from '../status'
+import { useBriefUpdates } from '../brief-events'
 
 interface BriefDetailPageProps {
   briefId: string
@@ -18,6 +21,10 @@ interface BriefDetailPageProps {
 }
 
 function ResultList({ items }: { items: string[] }) {
+  if (items.length === 0) {
+    return <p className="result-empty">Não informado no briefing.</p>
+  }
+
   return (
     <ul className="result-list">
       {items.map((item, index) => <li key={`${index}-${item}`}>{item}</li>)}
@@ -25,7 +32,7 @@ function ResultList({ items }: { items: string[] }) {
   )
 }
 
-function AnalysisResult({ result }: { result: BriefAnalysisResult }) {
+function AnalysisResult({ result }: { result: AnalyzedBriefResult }) {
   return (
     <div className="result-grid">
       <article className="result-card result-wide result-summary">
@@ -56,6 +63,36 @@ function AnalysisResult({ result }: { result: BriefAnalysisResult }) {
   )
 }
 
+function InsufficientResult({
+  result,
+  canEdit,
+  onEdit,
+}: {
+  result: InsufficientBriefResult
+  canEdit: boolean
+  onEdit: () => void
+}) {
+  return (
+    <section className="insufficient-panel">
+      <div className="insufficient-icon" aria-hidden="true">?</div>
+      <div>
+        <span className="eyebrow">Análise responsável</span>
+        <h2>O briefing precisa de mais contexto</h2>
+        <p>{result.reason}</p>
+        <h3>Inclua estas informações</h3>
+        <ResultList items={result.missingInformation} />
+        {canEdit && (
+          <div className="insufficient-actions">
+            <button className="button button-primary" type="button" onClick={onEdit}>
+              Complementar briefing
+            </button>
+          </div>
+        )}
+      </div>
+    </section>
+  )
+}
+
 export function BriefDetailPage({ briefId, isAdmin, onBack, onDeleted }: BriefDetailPageProps) {
   const [brief, setBrief] = useState<BriefDetail>()
   const [loading, setLoading] = useState(true)
@@ -63,6 +100,7 @@ export function BriefDetailPage({ briefId, isAdmin, onBack, onDeleted }: BriefDe
   const [editing, setEditing] = useState(false)
   const [saving, setSaving] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  const [retrying, setRetrying] = useState(false)
   const [editTitle, setEditTitle] = useState('')
   const [editBrief, setEditBrief] = useState('')
   const [error, setError] = useState<string>()
@@ -84,6 +122,11 @@ export function BriefDetailPage({ briefId, isAdmin, onBack, onDeleted }: BriefDe
       setRefreshing(false)
     }
   }, [briefId])
+
+  const handleBriefUpdate = useCallback((event: { briefId: string }) => {
+    if (event.briefId === briefId) void loadBrief(true)
+  }, [briefId, loadBrief])
+  const realtimeConnected = useBriefUpdates(handleBriefUpdate)
 
   useEffect(() => {
     let cancelled = false
@@ -112,11 +155,12 @@ export function BriefDetailPage({ briefId, isAdmin, onBack, onDeleted }: BriefDe
   }, [briefId])
 
   useEffect(() => {
+    if (realtimeConnected) return
     if (brief?.status !== 'PENDING' && brief?.status !== 'PROCESSING') return
 
     const intervalId = window.setInterval(() => void loadBrief(true), 2_500)
     return () => window.clearInterval(intervalId)
-  }, [brief?.status, loadBrief])
+  }, [brief?.status, loadBrief, realtimeConnected])
 
   function startEditing() {
     if (!brief) return
@@ -131,12 +175,16 @@ export function BriefDetailPage({ briefId, isAdmin, onBack, onDeleted }: BriefDe
 
     setSaving(true)
     setError(undefined)
+    const shouldReprocess = brief.result?.outcome === 'INSUFFICIENT_BRIEF'
 
     try {
-      setBrief(await updateBrief(brief.id, {
+      const updatedBrief = await updateBrief(brief.id, {
         title: editTitle.trim(),
         brief: editBrief.trim(),
-      }))
+      })
+      setBrief(
+        shouldReprocess ? await retryBrief(brief.id) : updatedBrief,
+      )
       setEditing(false)
     } catch (requestError) {
       setError(
@@ -144,6 +192,7 @@ export function BriefDetailPage({ briefId, isAdmin, onBack, onDeleted }: BriefDe
           ? requestError.message
           : 'Não foi possível salvar as alterações.',
       )
+      if (shouldReprocess) void loadBrief(true)
     } finally {
       setSaving(false)
     }
@@ -165,6 +214,25 @@ export function BriefDetailPage({ briefId, isAdmin, onBack, onDeleted }: BriefDe
           : 'Não foi possível excluir a análise.',
       )
       setDeleting(false)
+    }
+  }
+
+  async function retryProcessing() {
+    if (!brief?.error?.retryable) return
+
+    setRetrying(true)
+    setError(undefined)
+
+    try {
+      setBrief(await retryBrief(brief.id))
+    } catch (requestError) {
+      setError(
+        requestError instanceof Error
+          ? requestError.message
+          : 'Não foi possível reenviar a análise para processamento.',
+      )
+    } finally {
+      setRetrying(false)
     }
   }
 
@@ -202,7 +270,7 @@ export function BriefDetailPage({ briefId, isAdmin, onBack, onDeleted }: BriefDe
           <div className="detail-status-line">
             <StatusBadge status={brief.status} />
             {isInProgress && (
-              <span className="live-note"><span /> atualização automática</span>
+              <span className="live-note"><span /> {realtimeConnected ? 'tempo real' : 'atualização automática'}</span>
             )}
           </div>
           <h1>{brief.title}</h1>
@@ -249,7 +317,15 @@ export function BriefDetailPage({ briefId, isAdmin, onBack, onDeleted }: BriefDe
                 <span className="eyebrow">Análise estruturada</span>
                 <h2>Resultado</h2>
               </div>
-              <AnalysisResult result={brief.result} />
+              {brief.result.outcome === 'INSUFFICIENT_BRIEF' ? (
+                <InsufficientResult
+                  result={brief.result}
+                  canEdit={isAdmin}
+                  onEdit={startEditing}
+                />
+              ) : (
+                <AnalysisResult result={brief.result} />
+              )}
             </section>
           ) : brief.status === 'FAILED' ? (
             <section className="failed-panel">
@@ -262,6 +338,18 @@ export function BriefDetailPage({ briefId, isAdmin, onBack, onDeleted }: BriefDe
                   <div><dt>Código</dt><dd>{brief.error?.code ?? 'UNKNOWN_ERROR'}</dd></div>
                   <div><dt>Pode tentar novamente?</dt><dd>{brief.error?.retryable ? 'Sim' : 'Não'}</dd></div>
                 </dl>
+                {brief.error?.retryable && (
+                  <div className="failed-actions">
+                    <button
+                      className="button button-primary"
+                      type="button"
+                      onClick={() => void retryProcessing()}
+                      disabled={retrying}
+                    >
+                      {retrying ? <><span className="loader loader-small" /> Reenviando…</> : 'Tentar novamente'}
+                    </button>
+                  </div>
+                )}
               </div>
             </section>
           ) : (

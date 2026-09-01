@@ -1,4 +1,5 @@
 import { deleteModel, model, Types } from 'mongoose';
+import { BriefAnalysisOutcome } from '@ai-brief/shared';
 import {
   Brief,
   BriefAnalysisResult,
@@ -17,6 +18,7 @@ const validInput = {
 };
 
 const validResult: BriefAnalysisResult = {
+  outcome: BriefAnalysisOutcome.ANALYZED,
   summary: 'A launch campaign focused on small businesses.',
   mainObjective: 'Introduce the product and generate qualified leads.',
   targetAudience: ['Small business owners'],
@@ -59,10 +61,48 @@ describe('BriefSchema', () => {
       status: BriefStatus.COMPLETED,
       result: {
         summary: 'Incomplete result',
-      } as BriefAnalysisResult,
+      },
     });
 
     await expect(brief.validate()).rejects.toThrow();
+  });
+
+  it('accepts a structured insufficient-brief result without invented fields', async () => {
+    const brief = new BriefModel({
+      ...validInput,
+      status: BriefStatus.COMPLETED,
+      result: {
+        outcome: BriefAnalysisOutcome.INSUFFICIENT_BRIEF,
+        reason:
+          'The input contains random characters and cannot support a grounded analysis.',
+        missingInformation: ['A comprehensible initiative description'],
+      },
+      attemptCount: 1,
+      processingStartedAt: new Date(),
+      completedAt: new Date(),
+    });
+
+    await expect(brief.validate()).resolves.toBeUndefined();
+    expect(brief.result?.summary).toBeUndefined();
+  });
+
+  it('keeps legacy analyzed results readable without an outcome field', async () => {
+    const legacyResult = {
+      summary: validResult.summary,
+      mainObjective: validResult.mainObjective,
+      targetAudience: validResult.targetAudience,
+      communicationPillars: validResult.communicationPillars,
+      suggestedActions: validResult.suggestedActions,
+      risks: validResult.risks,
+    };
+    const brief = new BriefModel({
+      ...validInput,
+      status: BriefStatus.COMPLETED,
+      result: legacyResult,
+      attemptCount: 1,
+    });
+
+    await expect(brief.validate()).resolves.toBeUndefined();
   });
 
   it('accepts a structured processing error', async () => {

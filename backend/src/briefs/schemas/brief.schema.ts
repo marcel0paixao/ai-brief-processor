@@ -1,6 +1,6 @@
 import {
+  BriefAnalysisOutcome,
   BriefStatus,
-  type BriefAnalysisResult as BriefAnalysisResultContract,
   type BriefProcessingError as BriefProcessingErrorContract,
 } from '@ai-brief/shared';
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
@@ -8,25 +8,66 @@ import { HydratedDocument, SchemaTypes, Types } from 'mongoose';
 
 export { BriefStatus } from '@ai-brief/shared';
 
+function requiresAnalyzedResult(this: BriefAnalysisResult): boolean {
+  return this.outcome !== BriefAnalysisOutcome.INSUFFICIENT_BRIEF;
+}
+
+function requiresInsufficientResult(this: BriefAnalysisResult): boolean {
+  return this.outcome === BriefAnalysisOutcome.INSUFFICIENT_BRIEF;
+}
+
 @Schema({ _id: false })
-export class BriefAnalysisResult implements BriefAnalysisResultContract {
-  @Prop({ required: true, trim: true })
-  summary!: string;
+export class BriefAnalysisResult {
+  @Prop({
+    type: String,
+    enum: BriefAnalysisOutcome,
+    required: false,
+  })
+  outcome?: BriefAnalysisOutcome;
 
-  @Prop({ required: true, trim: true })
-  mainObjective!: string;
+  @Prop({ required: requiresAnalyzedResult, trim: true })
+  summary?: string;
 
-  @Prop({ type: [String], required: true })
-  targetAudience!: string[];
+  @Prop({ required: requiresAnalyzedResult, trim: true })
+  mainObjective?: string;
 
-  @Prop({ type: [String], required: true })
-  communicationPillars!: string[];
+  @Prop({
+    type: [String],
+    required: requiresAnalyzedResult,
+    default: undefined,
+  })
+  targetAudience?: string[];
 
-  @Prop({ type: [String], required: true })
-  suggestedActions!: string[];
+  @Prop({
+    type: [String],
+    required: requiresAnalyzedResult,
+    default: undefined,
+  })
+  communicationPillars?: string[];
 
-  @Prop({ type: [String], required: true })
-  risks!: string[];
+  @Prop({
+    type: [String],
+    required: requiresAnalyzedResult,
+    default: undefined,
+  })
+  suggestedActions?: string[];
+
+  @Prop({
+    type: [String],
+    required: requiresAnalyzedResult,
+    default: undefined,
+  })
+  risks?: string[];
+
+  @Prop({ required: requiresInsufficientResult, trim: true })
+  reason?: string;
+
+  @Prop({
+    type: [String],
+    required: requiresInsufficientResult,
+    default: undefined,
+  })
+  missingInformation?: string[];
 }
 
 export const BriefAnalysisResultSchema =

@@ -38,6 +38,15 @@ export class BriefsController {
     return this.briefsService.create(createBriefDto, currentUser);
   }
 
+  @Post(':id/retry')
+  @HttpCode(HttpStatus.ACCEPTED)
+  retry(
+    @Param() { id }: BriefIdParamDto,
+    @CurrentUser() currentUser: AuthenticatedUser,
+  ): Promise<BriefDetailDto> {
+    return this.briefsService.retry(id, currentUser);
+  }
+
   @Get()
   findAll(
     @Query() query: BriefQueryDto,

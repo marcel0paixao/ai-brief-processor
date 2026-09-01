@@ -21,7 +21,7 @@
     "dev:worker": "npm run build --workspace shared && npm run start:dev --workspace worker",
     "build": "npm run build --workspace shared && npm run build --workspace backend && npm run build --workspace worker && npm run build --workspace frontend",
     "lint": "npm run lint --workspace shared && npm run lint --workspace backend && npm run lint --workspace worker && npm run lint --workspace frontend",
-    "test": "npm run build --workspace shared && npm run test --workspace backend -- --runInBand",
+    "test": "npm run build --workspace shared && npm run test --workspace backend -- --runInBand && npm run test --workspace worker",
     "test:e2e": "npm run build --workspace shared && npm run test:e2e --workspace backend",
     "infra:up": "docker compose up -d mongodb redis",
     "infra:down": "docker compose stop mongodb redis",
