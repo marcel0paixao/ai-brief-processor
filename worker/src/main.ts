@@ -1,5 +1,8 @@
 import './load-env';
-import { BRIEF_ANALYSIS_QUEUE } from '@ai-brief/shared';
+import {
+  BRIEF_ANALYSIS_QUEUE,
+  BRIEF_EVENTS_CHANNEL,
+} from '@ai-brief/shared';
 import type { AnalyzeBriefJobData } from '@ai-brief/shared';
 import { Worker } from 'bullmq';
 import IORedis from 'ioredis';
@@ -18,6 +21,7 @@ let isShuttingDown = false;
 
 let worker: Worker<AnalyzeBriefJobData, BriefProcessorResult> | undefined;
 let redis: IORedis | undefined;
+let eventsRedis: IORedis | undefined;
 
 async function bootstrap(): Promise<void> {
   await mongoose.connect(config.mongodbUri);
@@ -28,10 +32,18 @@ async function bootstrap(): Promise<void> {
     db: config.redisDb,
     maxRetriesPerRequest: null,
   });
+  eventsRedis = redis.duplicate({ connectionName: 'brief-events-publisher' });
 
   worker = new Worker(
     BRIEF_ANALYSIS_QUEUE,
-    createBriefProcessor({ repository: briefRepository, analyzeBrief }),
+    createBriefProcessor({
+      repository: briefRepository,
+      analyzeBrief,
+      publishBriefUpdate: async (event) => {
+        if (!eventsRedis) throw new Error('Brief event publisher is closed');
+        await eventsRedis.publish(BRIEF_EVENTS_CHANNEL, JSON.stringify(event));
+      },
+    }),
     {
       connection: redis,
       concurrency: config.concurrency,
@@ -179,6 +191,21 @@ async function shutdown(reason: ShutdownReason): Promise<void> {
 
   const activeRedis = redis;
   redis = undefined;
+  const activeEventsRedis = eventsRedis;
+  eventsRedis = undefined;
+  const eventsRedisClosed = await closeResource(
+    'Redis event publisher',
+    async () => {
+      if (!activeEventsRedis) return;
+
+      try {
+        await activeEventsRedis.quit();
+      } catch (error) {
+        activeEventsRedis.disconnect();
+        throw error;
+      }
+    },
+  );
   const redisClosed = await closeResource('Redis', async () => {
     if (!activeRedis) return;
 
@@ -196,7 +223,8 @@ async function shutdown(reason: ShutdownReason): Promise<void> {
     }
   });
 
-  const clean = workerClosed && redisClosed && mongoClosed;
+  const clean =
+    workerClosed && eventsRedisClosed && redisClosed && mongoClosed;
   if (!clean) process.exitCode = 1;
 
   console.info('Worker stopped', { reason, clean });

@@ -1,8 +1,9 @@
-import { ANALYZE_BRIEF_JOB } from '@ai-brief/shared';
+import { ANALYZE_BRIEF_JOB, BriefStatus } from '@ai-brief/shared';
 import type {
   AnalyzeBriefJobData,
   BriefAnalysisResult,
   BriefProcessingError,
+  BriefUpdatedEvent,
 } from '@ai-brief/shared';
 import { UnrecoverableError } from 'bullmq';
 import type { Job } from 'bullmq';
@@ -26,6 +27,7 @@ export interface BriefProcessorResult {
 export interface BriefProcessorDependencies {
   repository: BriefRepository;
   analyzeBrief(input: AnalyzeBriefInput): Promise<BriefAnalysisResult>;
+  publishBriefUpdate?(event: BriefUpdatedEvent): Promise<void>;
   logger?: BriefProcessorLogger;
 }
 
@@ -86,9 +88,34 @@ export function createBriefProcessor(dependencies: BriefProcessorDependencies) {
   return async function processBrief(
     job: Job<AnalyzeBriefJobData>,
   ): Promise<BriefProcessorResult> {
-    const { repository, analyzeBrief, logger = console } = dependencies;
+    const {
+      repository,
+      analyzeBrief,
+      publishBriefUpdate,
+      logger = console,
+    } = dependencies;
     let scope: AnalyzeBriefJobData | undefined;
     let attemptStarted = false;
+
+    const publishUpdate = async (status: BriefStatus): Promise<void> => {
+      if (!scope || !publishBriefUpdate) return;
+
+      try {
+        await publishBriefUpdate({
+          ...scope,
+          status,
+          occurredAt: new Date().toISOString(),
+        });
+      } catch (error) {
+        logger.warn('Não foi possível publicar a atualização do brief.', {
+          briefId: scope.briefId,
+          tenantId: scope.tenantId,
+          jobId: job.id,
+          status,
+          errorName: error instanceof Error ? error.name : 'UnknownError',
+        });
+      }
+    };
 
     try {
       scope = readJobScope(job);
@@ -102,6 +129,7 @@ export function createBriefProcessor(dependencies: BriefProcessorDependencies) {
       }
 
       attemptStarted = true;
+      await publishUpdate(BriefStatus.PROCESSING);
       const result = await analyzeBrief({
         title: attempt.brief.title,
         brief: attempt.brief.brief,
@@ -125,6 +153,8 @@ export function createBriefProcessor(dependencies: BriefProcessorDependencies) {
           true,
         );
       }
+
+      await publishUpdate(BriefStatus.COMPLETED);
 
       return { briefId: scope.briefId };
     } catch (error) {
@@ -158,6 +188,10 @@ export function createBriefProcessor(dependencies: BriefProcessorDependencies) {
             maxAttempts,
             attemptsStarted: job.attemptsStarted,
           });
+        } else {
+          await publishUpdate(
+            willRetry ? BriefStatus.PENDING : BriefStatus.FAILED,
+          );
         }
       }
 

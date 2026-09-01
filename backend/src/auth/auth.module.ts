@@ -49,5 +49,6 @@ const DEVELOPMENT_JWT_SECRET =
     { provide: APP_GUARD, useClass: AuthenticationGuard },
     { provide: APP_GUARD, useClass: RolesGuard },
   ],
+  exports: [AuthService],
 })
 export class AuthModule {}

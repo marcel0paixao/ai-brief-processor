@@ -9,6 +9,7 @@ import { AuthModule } from './auth/auth.module';
 import { BriefsModule } from './briefs/briefs.module';
 import { BRIEF_QUEUE_CONFIG } from './briefs/queue/briefs-queue.constants';
 import { UsersModule } from './users/users.module';
+import { BriefEventsGateway } from './realtime/brief-events.gateway';
 
 @Module({
   imports: [
@@ -52,6 +53,7 @@ import { UsersModule } from './users/users.module';
   controllers: [AppController],
   providers: [
     AppService,
+    BriefEventsGateway,
     {
       provide: APP_PIPE,
       useFactory: () =>

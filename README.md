@@ -17,7 +17,8 @@ Já estão disponíveis:
 - Redis com persistência AOF;
 - contratos compartilhados entre API e worker;
 - frontend funcional com login, criação de workspace, gestão de equipe, filtros,
-  paginação, criação, detalhe, edição administrativa, retry e polling;
+  paginação, criação, detalhe, edição administrativa, retry e atualização em
+  tempo real com fallback de polling;
 - frontend, backend e worker como serviços Docker separados;
 - consumidor BullMQ com OpenRouter, timeout, validação de schema, retries e
   persistência de erros classificados;
@@ -37,6 +38,11 @@ NestJS API ----> MongoDB
 Redis/BullMQ ----> Node.js Worker
                          |
                          +----> OpenRouter / LLM
+                         |
+                         +----> Redis Pub/Sub ----> NestJS WebSocket
+                                                       |
+                                                       v
+                                                  React UI
 ```
 
 O MongoDB armazena tenants, usuários, briefs, status, resultado e erro. O Redis
@@ -398,7 +404,8 @@ A interface oferece:
 - navegação e ações condicionadas ao papel do usuário;
 - gestão de usuários para administradores;
 - lista com busca, status, período, ordenação, paginação e atualização periódica;
-- detalhe com polling para estados `PENDING` e `PROCESSING`;
+- lista e detalhe atualizados por WebSocket, isolados por tenant, com polling
+  usado somente quando a conexão em tempo real está indisponível;
 - visualização do resultado estruturado, erros persistidos e briefings
   considerados insuficientes;
 - retry manual para falhas recuperáveis;

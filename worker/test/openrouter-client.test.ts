@@ -144,6 +144,35 @@ test('classifica timeout durante leitura do corpo como timeout', async () => {
   await expectProcessingError('LLM_TIMEOUT', true);
 });
 
+test('rejeita JSON malformado sem persistir um resultado aparente', async () => {
+  globalThis.fetch = async () =>
+    Response.json({
+      choices: [{ message: { content: '{"result":' } }],
+    });
+
+  await expectProcessingError('LLM_INVALID_RESPONSE', true);
+});
+
+test('rejeita resultado fora do schema', async () => {
+  globalThis.fetch = async () =>
+    Response.json({
+      choices: [
+        {
+          message: {
+            content: JSON.stringify({
+              result: {
+                ...analyzedResult,
+                suggestedActions: [],
+              },
+            }),
+          },
+        },
+      ],
+    });
+
+  await expectProcessingError('LLM_INVALID_RESPONSE', true);
+});
+
 test('não chama o provider para texto obviamente incoerente', async () => {
   let fetchCalled = false;
   globalThis.fetch = async () => {

@@ -66,8 +66,17 @@ function makeRepository(
 }
 
 test('conclui um brief e retorna seu ID', async () => {
+  let attemptsStarted = 0;
+  let analyzerCalls = 0;
   let completedWith: BriefAnalysisResult | undefined;
+  const publishedStatuses: BriefStatus[] = [];
   const repository = makeRepository({
+    startAttempt: async (briefId, tenantId) => {
+      attemptsStarted += 1;
+      assert.equal(briefId, brief._id.toHexString());
+      assert.equal(tenantId, brief.tenantId.toHexString());
+      return { kind: 'process', brief };
+    },
     complete: async (_briefId, _tenantId, result) => {
       completedWith = result;
       return true;
@@ -75,13 +84,29 @@ test('conclui um brief e retorna seu ID', async () => {
   });
   const processor = createBriefProcessor({
     repository,
-    analyzeBrief: async () => analysis,
+    analyzeBrief: async (input) => {
+      analyzerCalls += 1;
+      assert.deepEqual(input, {
+        title: brief.title,
+        brief: brief.brief,
+      });
+      return analysis;
+    },
+    publishBriefUpdate: async (event) => {
+      publishedStatuses.push(event.status);
+    },
   });
 
   const result = await processor(makeJob());
 
   assert.deepEqual(result, { briefId: brief._id.toHexString() });
+  assert.equal(attemptsStarted, 1);
+  assert.equal(analyzerCalls, 1);
   assert.deepEqual(completedWith, analysis);
+  assert.deepEqual(publishedStatuses, [
+    BriefStatus.PROCESSING,
+    BriefStatus.COMPLETED,
+  ]);
 });
 
 test('não chama a IA quando o brief já foi concluído', async () => {
@@ -106,7 +131,7 @@ test('não chama a IA quando o brief já foi concluído', async () => {
   assert.equal(analyzerCalled, false);
 });
 
-test('prepara retry para erro recuperável antes da última tentativa', async () => {
+test('prepara retry para timeout antes da última tentativa', async () => {
   let retryError: unknown;
   let failed = false;
   const repository = makeRepository({
@@ -122,14 +147,14 @@ test('prepara retry para erro recuperável antes da última tentativa', async ()
   const processor = createBriefProcessor({
     repository,
     analyzeBrief: async () => {
-      throw new ProcessingError('LLM_RATE_LIMITED', 'Limite atingido.', true);
+      throw new ProcessingError('LLM_TIMEOUT', 'Tempo limite.', true);
     },
   });
 
   await assert.rejects(processor(makeJob()), ProcessingError);
   assert.deepEqual(retryError, {
-    code: 'LLM_RATE_LIMITED',
-    message: 'Limite atingido.',
+    code: 'LLM_TIMEOUT',
+    message: 'Tempo limite.',
     retryable: true,
   });
   assert.equal(failed, false);

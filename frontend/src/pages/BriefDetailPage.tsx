@@ -11,6 +11,7 @@ import {
 import { StatusBadge } from '../components/StatusBadge'
 import { formatDate } from '../format'
 import { getStatusLabel } from '../status'
+import { useBriefUpdates } from '../brief-events'
 
 interface BriefDetailPageProps {
   briefId: string
@@ -122,6 +123,11 @@ export function BriefDetailPage({ briefId, isAdmin, onBack, onDeleted }: BriefDe
     }
   }, [briefId])
 
+  const handleBriefUpdate = useCallback((event: { briefId: string }) => {
+    if (event.briefId === briefId) void loadBrief(true)
+  }, [briefId, loadBrief])
+  const realtimeConnected = useBriefUpdates(handleBriefUpdate)
+
   useEffect(() => {
     let cancelled = false
 
@@ -149,11 +155,12 @@ export function BriefDetailPage({ briefId, isAdmin, onBack, onDeleted }: BriefDe
   }, [briefId])
 
   useEffect(() => {
+    if (realtimeConnected) return
     if (brief?.status !== 'PENDING' && brief?.status !== 'PROCESSING') return
 
     const intervalId = window.setInterval(() => void loadBrief(true), 2_500)
     return () => window.clearInterval(intervalId)
-  }, [brief?.status, loadBrief])
+  }, [brief?.status, loadBrief, realtimeConnected])
 
   function startEditing() {
     if (!brief) return
@@ -263,7 +270,7 @@ export function BriefDetailPage({ briefId, isAdmin, onBack, onDeleted }: BriefDe
           <div className="detail-status-line">
             <StatusBadge status={brief.status} />
             {isInProgress && (
-              <span className="live-note"><span /> atualização automática</span>
+              <span className="live-note"><span /> {realtimeConnected ? 'tempo real' : 'atualização automática'}</span>
             )}
           </div>
           <h1>{brief.title}</h1>

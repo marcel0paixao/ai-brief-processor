@@ -5,18 +5,10 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { InjectModel } from '@nestjs/mongoose';
-import { JwtService } from '@nestjs/jwt';
 import { Request } from 'express';
-import { Model } from 'mongoose';
 import { AuthenticatedUser } from '../authenticated-user';
+import { AuthService } from '../auth.service';
 import { IS_PUBLIC_KEY } from '../decorators/public.decorator';
-import { Tenant } from '../schemas/tenant.schema';
-import { User } from '../schemas/user.schema';
-
-interface AccessTokenPayload {
-  sub: string;
-}
 
 type AuthenticatedRequest = Request & { user?: AuthenticatedUser };
 
@@ -24,9 +16,7 @@ type AuthenticatedRequest = Request & { user?: AuthenticatedUser };
 export class AuthenticationGuard implements CanActivate {
   constructor(
     private readonly reflector: Reflector,
-    private readonly jwtService: JwtService,
-    @InjectModel(User.name) private readonly userModel: Model<User>,
-    @InjectModel(Tenant.name) private readonly tenantModel: Model<Tenant>,
+    private readonly authService: AuthService,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -42,32 +32,8 @@ export class AuthenticationGuard implements CanActivate {
 
     if (!token) throw this.unauthorized();
 
-    try {
-      const payload =
-        await this.jwtService.verifyAsync<AccessTokenPayload>(token);
-      const user = await this.userModel
-        .findOne({ _id: payload.sub, isActive: true })
-        .exec();
-
-      if (!user) throw this.unauthorized();
-
-      const tenant = await this.tenantModel.findById(user.tenantId).exec();
-      if (!tenant) throw this.unauthorized();
-
-      request.user = {
-        id: user._id.toString(),
-        name: user.name,
-        email: user.email,
-        role: user.role,
-        tenantId: tenant._id.toString(),
-        tenantName: tenant.name,
-        tenantSlug: tenant.slug,
-      };
-
-      return true;
-    } catch {
-      throw this.unauthorized();
-    }
+    request.user = await this.authService.authenticateAccessToken(token);
+    return true;
   }
 
   private extractBearerToken(request: Request): string | undefined {

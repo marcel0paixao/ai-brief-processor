@@ -1,5 +1,7 @@
 export const BRIEF_ANALYSIS_QUEUE = 'brief-analysis';
 export const ANALYZE_BRIEF_JOB = 'analyze-brief';
+export const BRIEF_EVENTS_CHANNEL = 'brief-events';
+export const BRIEF_UPDATED_EVENT = 'brief.updated';
 
 export interface AnalyzeBriefJobData {
   briefId: string;
@@ -16,6 +18,13 @@ export enum BriefStatus {
   PROCESSING = 'PROCESSING',
   COMPLETED = 'COMPLETED',
   FAILED = 'FAILED',
+}
+
+export interface BriefUpdatedEvent {
+  briefId: string;
+  tenantId: string;
+  status: BriefStatus;
+  occurredAt: string;
 }
 
 export enum BriefAnalysisOutcome {
