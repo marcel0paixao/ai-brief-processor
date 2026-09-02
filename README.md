@@ -1,6 +1,6 @@
 # AI Brief Processor
 
-Aplicação do desafio técnico Full Stack Developer — Platform & AI da Maestria.
+Aplicação do desafio técnico Full Stack Developer - Platform & AI da Maestria.
 
 Esta documentação descreve o estado atual e executável do projeto.
 
