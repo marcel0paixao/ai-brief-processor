@@ -455,9 +455,9 @@ itens acima permanecem como evoluções de confiabilidade e operação.
 
 ### O que faria com mais tempo
 
-- implementaria Transactional Outbox para eliminar a janela entre MongoDB e Redis;
-- adicionaria watchdog/lease para recuperar briefs presos em PROCESSING;
 - criaria testes automatizados do frontend e testes E2E no navegador;
 - configuraria CI para build, lint e testes;
 - avaliaria modelos por qualidade, latência e custo;
 - reforçaria autenticação com refresh token, recuperação de senha e convites.
+- criaria uma camada de configuração por tenant para que o usuário pudesse escolher, entre os modelos disponíveis, a LLM mais adequada ao seu caso;
+- criaria testes automatizados do frontend e testes end-to-end no navegador,
