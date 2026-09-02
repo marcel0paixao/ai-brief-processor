@@ -28,25 +28,7 @@ Já estão disponíveis:
 
 ## Arquitetura atual
 
-```text
-React/Vite + Nginx
-    |
-    | /api
-    v
-NestJS API ----> MongoDB
-    |
-    | job { briefId, tenantId }
-    v
-Redis/BullMQ ----> Node.js Worker
-                         |
-                         +----> OpenRouter / LLM
-                         +----> DLQ de falhas definitivas
-                         |
-                         +----> Redis Pub/Sub ----> NestJS WebSocket
-                                                       |
-                                                       v
-                                                  React UI
-```
+![Arquitetura da solução](docs/architecture.png)
 
 O MongoDB armazena tenants, usuários, briefs, status, resultado e erro. O Redis
 transporta os identificadores do brief e do tenant. O cliente nunca informa o
