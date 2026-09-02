@@ -441,6 +441,15 @@ A interface oferece:
 - retry manual para falhas recuperáveis;
 - execução local pelo Vite ou conteinerizada com Nginx.
 
+### O que faria com mais tempo
+
+- implementaria Transactional Outbox para eliminar a janela entre MongoDB e Redis;
+- adicionaria watchdog/lease para recuperar briefs presos em PROCESSING;
+- criaria testes automatizados do frontend e testes E2E no navegador;
+- configuraria CI para build, lint e testes;
+- avaliaria modelos por qualidade, latência e custo;
+- reforçaria autenticação com refresh token, recuperação de senha e convites.
+
 ## Limitações conhecidas
 
 - a reconciliação é periódica e limitada a 100 briefs por ciclo, não um outbox transacional;
